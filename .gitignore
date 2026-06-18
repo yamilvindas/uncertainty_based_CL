@@ -1,5 +1,4 @@
 ./data/
-reconstructions/
 results/
 src/experiments/OLD/
 *__pycache__*
