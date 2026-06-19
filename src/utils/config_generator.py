@@ -3,6 +3,7 @@
 """
 import os
 import yaml
+import argparse
 
 def build_base_config(dataset_name):
     """
@@ -100,7 +101,7 @@ def write_yaml(filepath, data):
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
     print(f"Generated: {filepath}")
 
-def generate_all_configs():
+def generate_all_configs(generate_EWC_Replay_combination=True):
     # Base directories
     base_dir = "configs"
 
@@ -169,23 +170,38 @@ def generate_all_configs():
                 write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}.yaml"), replay_only)
                 
                 # ===> Replay with EWC <===
-                replay_ewc = build_base_config(dataset)
-                replay_ewc["exp_id"] = f"{dataset}_{mem_folder}_ReplayEWC"
-                replay_ewc["ContinualLearning"]["Replay"]["use_replay"] = True
-                replay_ewc["ContinualLearning"]["Replay"]["capacity"] = capacity_ratio
-                replay_ewc["ContinualLearning"]["Replay"]["lambda_replay"] = 1.0
-                replay_ewc["ContinualLearning"]["Replay"]["memory_strategy"] = mem_strategy
-                replay_ewc["ContinualLearning"]["EWC"]["use_ewc"] = True
-                replay_ewc["ContinualLearning"]["EWC"]["lambda_ewc"] = 1.0e3
-                if (mem_strategy.lower() == 'uncertainty'):
-                    replay_ewc['ContinualLearning']['Replay']['we'] = 1.0
-                    replay_ewc['ContinualLearning']['Replay']['wH'] = 1.0
-                    replay_ewc['ContinualLearning']['Replay']['wa'] = 1.0
-                    replay_ewc['ContinualLearning']['Replay']['alea_drop_fraction'] = 0.15
-                    replay_ewc['ContinualLearning']['Replay']['mc_passes'] = 10
-                
-                write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}_EWC.yaml"), replay_ewc)
+                if (generate_EWC_Replay_combination):
+                    replay_ewc = build_base_config(dataset)
+                    replay_ewc["exp_id"] = f"{dataset}_{mem_folder}_ReplayEWC"
+                    replay_ewc["ContinualLearning"]["Replay"]["use_replay"] = True
+                    replay_ewc["ContinualLearning"]["Replay"]["capacity"] = capacity_ratio
+                    replay_ewc["ContinualLearning"]["Replay"]["lambda_replay"] = 1.0
+                    replay_ewc["ContinualLearning"]["Replay"]["memory_strategy"] = mem_strategy
+                    replay_ewc["ContinualLearning"]["EWC"]["use_ewc"] = True
+                    replay_ewc["ContinualLearning"]["EWC"]["lambda_ewc"] = 1.0e3
+                    if (mem_strategy.lower() == 'uncertainty'):
+                        replay_ewc['ContinualLearning']['Replay']['we'] = 1.0
+                        replay_ewc['ContinualLearning']['Replay']['wH'] = 1.0
+                        replay_ewc['ContinualLearning']['Replay']['wa'] = 1.0
+                        replay_ewc['ContinualLearning']['Replay']['alea_drop_fraction'] = 0.15
+                        replay_ewc['ContinualLearning']['Replay']['mc_passes'] = 10
+                    write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}_EWC.yaml"), replay_ewc)
 
 if __name__ == "__main__":
-    generate_all_configs()
+    #====================================================================================================#
+    #========================================= Argument Parsing =========================================#
+    #====================================================================================================#
+    # Construct the argument parser
+    ap = argparse.ArgumentParser()
+    # Add the arguments to the parser
+    ap.add_argument('--generate_EWC_Replay_combination', help="Use if also want to generate the YAML files for the experiments combining EWC and Replay-based CL", action='store_true')
+    args = vars(ap.parse_args())
+
+    # Getting the value of the arguments
+    generate_EWC_Replay_combination = args['generate_EWC_Replay_combination']
+
+    #====================================================================================================#
+    #========================================== Generate Files ==========================================#
+    #====================================================================================================#
+    generate_all_configs(generate_EWC_Replay_combination=generate_EWC_Replay_combination)
     print("\n\n=======> All configuration folders and files have been successfully generated! <=======\n\n")

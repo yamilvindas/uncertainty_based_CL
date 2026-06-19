@@ -56,6 +56,8 @@ class CLTrainer:
         self.models_dir.mkdir(parents=True, exist_ok=True)
         self.metrics_dir = self.res_dir / "metrics"
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
+        self.memories_dir = self.res_dir / "memories"
+        self.memories_dir.mkdir(parents=True, exist_ok=True)
         self.h5_path = self.metrics_dir / "predictions.h5"
         
         # Initialize an empty HDF5 file
@@ -163,7 +165,8 @@ class CLTrainer:
             # Run holdout WITHOUT saving files to disk
             val_metric_a, val_metric_b, test_metric_a, test_metric_b = self.repeated_holdout(task_a_data, task_b_data, save_results=False, n_repetitions=1)
             
-            # We want to maximize the average metricuracy of both tasks
+            # We want to maximize the average metric of both tasks
+            # TODO: OPTIMIZE FORGETTING???
             return (val_metric_a + val_metric_b) / 2.0
         
         # Define the SQLite database path inside the results folder
@@ -255,8 +258,14 @@ class CLTrainer:
         all_preds = []
         all_labels = []
         with torch.no_grad():
-            for x, y in test_loader:
-                if isinstance(y, tuple) or isinstance(y, list): y = y[0]
+            for batch in test_loader:
+                # Get batch data
+                if (self.config['Dataset'].get('dataset_type', 'OrganMNIST') == "Camelyon17"):
+                    x, y, metadata = batch
+                else:
+                    x, y = batch
+                if (isinstance(y, tuple) or isinstance(y, list)):
+                    y = y[0]
                 outputs = self.model(x.to(self.device))
                 preds = torch.argmax(outputs, dim=1)
                 all_preds.extend(preds.cpu().numpy())
@@ -291,7 +300,13 @@ class CLTrainer:
             if (mem_loader):
                 mem_iter = iter(mem_loader)
 
-            for x, y in train_loader:
+            for batch in train_loader:
+                # Get batch data
+                if (self.config['Dataset'].get('dataset_type', 'OrganMNIST') == "Camelyon17"):
+                    x, y, metadata = batch
+                else:
+                    x, y = batch
+
                 # Get input data and labels
                 if (isinstance(y, tuple) or isinstance(y, list)):
                     y = y[0]
@@ -468,6 +483,19 @@ class CLTrainer:
                 print(f"\n\n==========> End of Repetition {rep + 1} <==========\n\n")
 
 
+            # Plot or save memory among all the training samples
+            if (self.memory is not None):
+                # File name
+                memories_fig_path = self.memories_dir / f"Memory-{rep}.png"
+
+                # Get computation device
+                device = torch.device(self.config.get("device", 'cuda:0'))
+
+                # Visualization
+                visualizer = LatentVisualizer(self.model, device)
+                visualizer.plot_memory_representation(self.loader_A, self.loader_B, self.memory, save_path=memories_fig_path)
+
+
         # Compute Mean and Standard Deviation
         final_means = {}
         if (save_results):
@@ -568,11 +596,6 @@ def main():
     print("\n\n==========> Starting final full run with optimal configuration <==========\n")
     trainer.repeated_holdout(task_a_data, task_b_data, ext_test_data, save_results=True, n_repetitions=config['Training'].get('n_repetitions', 5))
 
-    # Visualize memory
-    if (trainer.memory is not None):
-        device = torch.device(config.get("device", 'cuda:0'))
-        visualizer = LatentVisualizer(trainer.model, device)
-        visualizer.plot_memory_representation(trainer.loader_A, trainer.loader_B, trainer.memory)
 
 if __name__ == "__main__":
     main()

@@ -209,7 +209,7 @@ class LatentVisualizer:
                 labels.append(y.cpu().numpy())
         return np.concatenate(features), np.concatenate(labels)
 
-    def plot_memory_representation(self, task_a_loader, task_b_loader, memory_buffer):
+    def plot_memory_representation(self, task_a_loader, task_b_loader, memory_buffer, save_path=None):
         print("\n\n==========> Extracting features for visualization <==========")
         
         # Extract whole datasets
@@ -255,5 +255,8 @@ class LatentVisualizer:
         plt.ylabel("t-SNE Dimension 2")
         plt.legend()
         plt.grid(True)
-        plt.show()
+        if (save_path is None):
+            plt.show()
+        else:
+            plt.savefig(save_path, dpi=300)
 
