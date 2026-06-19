@@ -17,6 +17,7 @@ import numpy as np
 from pathlib import Path
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 import optuna
+from optuna.trial import TrialState
 from tqdm import tqdm
 
 # For internal imports
@@ -35,9 +36,22 @@ class CLTrainer:
 
         # Device for computations
         self.device = torch.device(self.config.get("device", 'cuda:0'))
+
+        # Define exp ID
+        self.exp_id = self.config['exp_id']
+        # Replay memory
+        if (self.config['ContinualLearning']['Replay'].get('use_replay', False)):
+            mem_strategy = self.config['ContinualLearning']['Replay'].get('memory_strategy', 'Uniform')
+            mem_capacity = self.config['ContinualLearning']['Replay']['capacity']
+            self.exp_id += f"_MemStrategy-{mem_strategy}_MemCapacity-{mem_capacity}"
+        # EWC
+        if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)):
+            self.exp_id += "_EWC-True"
+        else:
+            self.exp_id += "_EWC-False"
         
         # Setup Directories & Files
-        self.res_dir = Path(self.config['results_dir']) / self.config['exp_id']
+        self.res_dir = Path(self.config['results_dir']) / self.exp_id
         self.models_dir = self.res_dir / "models"
         self.models_dir.mkdir(parents=True, exist_ok=True)
         self.metrics_dir = self.res_dir / "metrics"
@@ -46,7 +60,7 @@ class CLTrainer:
         
         # Initialize an empty HDF5 file
         with h5py.File(self.h5_path, 'w') as f:
-            f.attrs['exp_id'] = self.config['exp_id']
+            f.attrs['exp_id'] = self.exp_id
 
         # Initialize State Variables
         self.model = None
@@ -95,7 +109,7 @@ class CLTrainer:
 
         # Create empty memory
         if (self.config['ContinualLearning']['Replay'].get('use_replay', False)):
-            self.memory = MemoryBuffer(self.config['ContinualLearning']['Replay']['capacity'], self.device)
+            self.memory = MemoryBuffer(self.config['ContinualLearning']['Replay']['capacity_in_n_samples'], self.device)
         else:
             self.memory = None
         
@@ -121,6 +135,21 @@ class CLTrainer:
             else:
                 lambda_ewc = 0.0
 
+            # For uncertainty-based sample selection
+            if (self.memory_strategy.lower() == 'uncertainty'):
+                # Suggest continuous weights between 0.0 and 2.0
+                we = trial.suggest_float("we", 0.0, 2.0)
+                wH = trial.suggest_float("wH", 0.0, 2.0)
+                wa = trial.suggest_float("wa", 0.0, 2.0)
+                alea_drop_fraction = trial.suggest_float("alea_drop_fraction", 0.0, 1.0)
+                
+                # Temporarily inject suggested params into the configuration state
+                self.config['ContinualLearning']['Replay']['we'] = we
+                self.config['ContinualLearning']['Replay']['wH'] = wH
+                self.config['ContinualLearning']['Replay']['wa'] = wa
+                self.config['alea_drop_fraction']['Replay']['alea_drop_fraction'] = alea_drop_fraction
+
+                
             # Temporarily inject suggested params into the configuration state
             self.config['Training']['lr'] = lr
             self.config['Training']['weight_decay'] = weight_decay
@@ -138,18 +167,27 @@ class CLTrainer:
             return (val_metric_a + val_metric_b) / 2.0
         
         # Define the SQLite database path inside the results folder
-        db_path = os.path.join(self.metrics_dir, f"{self.config['exp_id']}.db")
+        db_path = os.path.join(self.metrics_dir, f"{self.exp_id}.db")
         storage_name = f"sqlite:///{db_path}"
 
         # Run Study
         study = optuna.create_study(
                                         direction="maximize", 
-                                        study_name=self.config['exp_id'],
+                                        study_name=self.exp_id,
                                         storage=storage_name,
                                         load_if_exists=True  # This allows resuming an interrupted study!
                                     )
-        study.optimize(objective, n_trials=n_trials)
         
+        # Get number of completed trials in case we continue a study)
+        completed_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+        n_completed_trials = len(completed_trials)
+        # Remaining number of trials to do
+        n_remaining_trials_to_do = n_trials - n_completed_trials
+
+        # Doing study only if target number of completed trials has not been reached (in case we continue a study)
+        if (n_remaining_trials_to_do > 0):
+            study.optimize(objective, n_trials=n_trials)
+
         # Retrieve and log best parameters
         best_params = study.best_params
         print(f"\n\n==========> Optuna Search Complet <==========")
@@ -303,10 +341,17 @@ class CLTrainer:
                             self.memory.update_uniform(x, y)
                         elif (self.memory_strategy.lower() == 'loss'):
                             self.memory.update_loss_based(x, y, self.model, self.criterion)
-                        elif (self.memory_strategy.lower() == 'epistemic'):
-                            self.memory.update_uncertainty_based(x, y, self.model, mode='epistemic')
-                        elif (self.memory_strategy.lower() == 'aleatoric'):
-                            self.memory.update_uncertainty_based(x, y, self.model, mode='aleatoric')
+                        elif (self.memory_strategy.lower() == 'uncertainty'):
+                            self.memory.update_uncertainty_based(
+                                                                    new_x=x,
+                                                                    new_y=y, 
+                                                                    model=self.model,
+                                                                    we=self.config['ContinualLearning']['Replay']['we'],
+                                                                    wH=self.config['ContinualLearning']['Replay']['wH'],
+                                                                    wa=self.config['ContinualLearning']['Replay']['wa'],
+                                                                    alea_drop_fraction=self.config['ContinualLearning']['Replay']['alea_drop_fraction'],
+                                                                    mc_passes=self.config['ContinualLearning']['Replay']['mc_passes']
+                                                                )
                         elif (self.memory_strategy.lower() == 'dissimilarity'):
                             self.memory.update_feature_dissimilarity(x, y, self.model)
 
@@ -503,6 +548,11 @@ def main():
         task_a_data, task_b_data, ext_test_data = data_handler.get_tasks()
     else:
         raise ValueError(f"Dataset type {dataset_type} not valid.")
+    
+    # Define number of possible samples in the memory 
+    mem_capacity_samples = int(config['ContinualLearning']['Replay']['capacity']*data_handler.n_all_train_samples)
+    config['ContinualLearning']['Replay']['capacity_in_n_samples'] = mem_capacity_samples
+    print(f"\n\n==========> Memory capacity in number of samples: {mem_capacity_samples} (~{config['ContinualLearning']['Replay']['capacity']}%)")
 
     # Initialize Trainer (Model is created internally based on YAML)
     trainer = CLTrainer(config=config)

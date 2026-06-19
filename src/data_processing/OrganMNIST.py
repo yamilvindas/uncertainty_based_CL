@@ -73,5 +73,9 @@ class OrganMNISTHandler(DataHandler):
         task_b_val = self._load_medmnist('organcmnist', 'val')
         task_b_test = self._load_medmnist('organcmnist', 'test')
         
+        # Total number of samples
+        self.n_all_train_samples = len(task_a_train) + len(task_b_train)
+        print(f"\n\n===> Total number of TRAIN samples for ALL tasks: {self.n_all_train_samples}\n")
+
         return (task_a_train, task_a_val, task_a_test), (task_b_train, task_b_val, task_b_test)
     

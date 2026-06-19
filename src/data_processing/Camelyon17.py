@@ -49,7 +49,9 @@ class CamelyonHandler(DataHandler):
         
         # Combination of all the data
         all_data = ConcatDataset([train_data, val_data, test_data])
-        
+        self.n_all_train_samples = len(train_data)
+        print(f"\n\n===> Total number of TRAIN samples for ALL tasks: {self.n_all_train_samples}\n")
+
         # Get the hospital centers associated to each sample
         centers = []
         for i in range(len(all_data)):
