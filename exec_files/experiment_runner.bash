@@ -9,8 +9,8 @@ PROGRESS_LOG="completed_runs.log"
 MAIN_SCRIPT="src/experiments/main_experiment.py"  # Your main training entrypoint script
 
 # Activate environment
-source /home/vindasya/Desktop/PostDoc/Codes/epidemio_informed_GNNs/IPC_Env/bin/activate
-export PYTHONPATH="${PYTHONPATH}:/home/vindasya/Desktop/PostDoc/Codes/uncertainty_based_CL/"
+source .venv/bin/activate
+export PYTHONPATH="${PYTHONPATH}:./uncertainty_based_CL/"
 
 # Ensure the progress log exists
 touch "$PROGRESS_LOG"
