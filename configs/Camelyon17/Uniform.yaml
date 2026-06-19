@@ -1,0 +1,33 @@
+exp_id: "Camelyon17"
+
+device: "cuda:0"
+
+results_dir: "./results"
+
+ContinualLearning:
+  Replay:
+    use_replay: True
+    memory_strategy: "Uniform"
+    capacity: 0.1
+    lambda_replay: 1.0
+  EWC:
+    use_ewc: True
+    lambda_ewc: 1.0e3
+
+Dataset:
+  dataset_type: Camelyon17
+  Lite: True
+  num_classes: 11
+
+Model:
+  model_type: "CamelyonMobileNet"
+
+Training:
+  epochs: 3
+  lr: 1.0e-3
+  weight_decay: 1.0e-5
+  batch_size: 64
+  n_repetitions: 2
+
+Optuna:
+  n_trials: 4

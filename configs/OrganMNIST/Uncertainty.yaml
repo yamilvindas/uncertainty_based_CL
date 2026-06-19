@@ -1,0 +1,38 @@
+exp_id: "OrganMNIST_Uniform_Capacity-1000"
+
+device: "cuda:0"
+
+results_dir: "./results"
+
+ContinualLearning:
+  Replay:
+    use_replay: True
+    memory_strategy: "Uniform"
+    capacity: 0.1
+    lambda_replay: 1.0
+    we: 1.0
+    wH: 0.1
+    wa: 0.1
+    mc_passes: 10
+    perc_top_alea_uncert_remove: 0.15
+  EWC:
+    use_ewc: True
+    lambda_ewc: 1.0e3
+
+Dataset:
+  dataset_type: OrganMNIST
+  Lite: True
+  num_classes: 11
+
+Model:
+  model_type: "OrganCNN"
+
+Training:
+  epochs: 20
+  lr: 1.0e-3
+  weight_decay: 1.0e-5
+  batch_size: 64
+  n_repetitions: 10
+
+Optuna:
+  n_trials: 30

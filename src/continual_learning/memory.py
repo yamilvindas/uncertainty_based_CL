@@ -69,18 +69,24 @@ class MemoryBuffer:
         self.buffer_x = [all_x[i] for i in top_indices]
         self.buffer_y = [all_y[i] for i in top_indices]
 
-    def update_uncertainty_based(self, new_x, new_y, model, mc_passes=10, mode='epistemic'):
+    def update_uncertainty_based(self, new_x, new_y, model, we=1.0, wH=0.1, wa=0.1, alea_drop_fraction=0.15, mc_passes=10):
         """
-            Monte Carlo Dropout for uncertainty estimation.
-            mode: 'epistemic' (model uncertainty) or 'aleatoric' (data uncertainty).
+            Advanced uncertainty curation balancing Epistemic exploration, Entropy maximization,
+            and Aleatoric noise mitigation.
         """
+        # Keep Dropout active for Monte Carlo sampling
         model.train() # Enable Dropout
         all_x = self.buffer_x + list(new_x.cpu())
         all_y = self.buffer_y + list(new_y.cpu())
         
         uncertainties = []
         inputs = torch.stack(all_x).to(self.device)
-        
+
+        raw_epistemic = []
+        raw_aleatoric = []
+        raw_entropy = []
+
+        # Gather raw uncertainty profiles across all combined samples
         with torch.no_grad():
             for i in range(0, len(inputs), 32): 
                 batch = inputs[i:i+32]
@@ -88,32 +94,65 @@ class MemoryBuffer:
                 # Get probabilities for multiple forward passes: Shape (mc_passes, batch_size, num_classes)
                 probs = torch.stack([model(batch).softmax(dim=1) for _ in range(mc_passes)])
                 
-                # 1. Aleatoric Uncertainty: Mean of the entropies
+                # Aleatoric Uncertainty: Mean of the entropies
                 # Entropy = -sum(p * log(p))
-                entropies = -torch.sum(probs * torch.log(probs + 1e-10), dim=2) # (mc_passes, batch_size)
-                aleatoric = entropies.mean(dim=0) # (batch_size)
-                
-                # 2. Total Uncertainty: Entropy of the mean probabilities
-                mean_probs = probs.mean(dim=0) # (batch_size, num_classes)
-                total_uncertainty = -torch.sum(mean_probs * torch.log(mean_probs + 1e-10), dim=1) # (batch_size)
-                
-                # 3. Epistemic Uncertainty: Total - Aleatoric (Mutual Information)
-                epistemic = total_uncertainty - aleatoric
-                
-                if mode == 'epistemic':
-                    uncertainties.extend(epistemic.cpu().tolist())
-                elif mode == 'aleatoric':
-                    uncertainties.extend(aleatoric.cpu().tolist())
-                else:
-                    raise ValueError("Mode must be 'epistemic' or 'aleatoric'")
-                
-        uncertainties = torch.tensor(uncertainties)
-        # Select samples with the HIGHEST uncertainty
-        top_indices = torch.topk(uncertainties, min(self.capacity, len(uncertainties))).indices
-        
-        self.buffer_x = [all_x[i] for i in top_indices]
-        self.buffer_y = [all_y[i] for i in top_indices]
+                entropies_per_pass = -torch.sum(probs * torch.log(probs + 1e-10), dim=2) # (mc_passes, batch_size)
+                aleatoric = entropies_per_pass.mean(dim=0) # (batch_size)
 
+                # Total Entropy (Entropy of the average predictive probability)
+                mean_probs = probs.mean(dim=0) 
+                total_entropy = -torch.sum(mean_probs * torch.log(mean_probs + 1e-10), dim=1) 
+                
+                # Epistemic Uncertainty (Mutual Information = Total - Aleatoric)
+                epistemic = total_entropy - aleatoric
+                
+                # Add to raw uncertainties
+                raw_epistemic.extend(epistemic.cpu().numpy())
+                raw_aleatoric.extend(aleatoric.cpu().numpy())
+                raw_entropy.extend(total_entropy.cpu().numpy())
+
+
+        # Get the uncertainties
+        ua_mean = np.array(raw_aleatoric)
+        ue_mean = np.array(raw_epistemic)
+        h_mean = np.array(raw_entropy)
+        
+        # Min-Max Normalization Helper
+        def min_max_normalize(arr):
+            denominator = arr.max() - arr.min()
+            if (denominator == 0):
+                return np.zeros_like(arr)
+            return (arr - arr.min()) / denominator
+        # MinMax normalization
+        epistemic_norm = min_max_normalize(ue_mean)
+        aleatoric_norm = min_max_normalize(ua_mean)
+        entropy_norm = min_max_normalize(h_mean)
+        
+        # Compute Composite Curation Scores
+        # NOTE: epistemic measures model ignorance, so this term ensures the memory buffer captures the diversity of the data manifold, pulling in rare edge cases and minority groups.
+        # NOTE: aleatoric measures data noice, so this term tries to reduce data noise in the memory.
+        # NOTE: the predictive entropy (similar or equivalent to total uncertainty) acts as the "Decision Boundary" anchor, as it measures the flatness of the output probabilities. This term is important as forgetting happens at the boundaries, entropy finds the boundaries to perform hard mining.
+        scores = we * epistemic_norm + wH * entropy_norm - wa * aleatoric_norm
+        
+        # 4. Filter out highly noisy (high aleatoric) outliers using your percentile logic
+        aleatoric_cut = np.percentile(ua_mean, 100 - alea_drop_fraction*100)  
+        candidate_mask = (ua_mean <= aleatoric_cut)
+        
+        # Fallback safeguard: if all elements are identical, keep all as candidates
+        if (not np.any(candidate_mask)):
+            candidate_mask = np.ones_like(ua_mean, dtype=bool)
+        candidate_indices = np.where(candidate_mask)[0]
+        candidate_scores = scores[candidate_mask]
+        
+        # Extract top performing candidates up to buffer capacity
+        top_candidate_sort_idx = np.argsort(candidate_scores)[::-1][:self.capacity]
+        final_selected_indices = candidate_indices[top_candidate_sort_idx]
+        
+        # Commit chosen tensors back to storage
+        self.buffer_x = [all_x[i] for i in final_selected_indices]
+        self.buffer_y = [all_y[i] for i in final_selected_indices]
+
+                
     def update_feature_dissimilarity(self, new_x, new_y, model):
         """
             Greedy K-Center on extracted features to maximize memory diversity
