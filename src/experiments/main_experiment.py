@@ -131,7 +131,7 @@ class CLTrainer:
             else:
                 lambda_replay = 0.0
             if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)):
-                lambda_ewc = trial.suggest_float("lambda_ewc", 10.0, 5000.0)
+                lambda_ewc = trial.suggest_float("lambda_ewc", 10.0, 15000.0)
             else:
                 lambda_ewc = 0.0
 

@@ -1,0 +1,26 @@
+exp_id: Camelyon17_Mem-100_Replay
+device: cuda:0
+results_dir: ./results
+ContinualLearning:
+  Replay:
+    use_replay: true
+    memory_strategy: dissimilarity
+    capacity: 1.0
+    lambda_replay: 1.0
+  EWC:
+    use_ewc: false
+    lambda_ewc: 0.0
+Dataset:
+  dataset_type: Camelyon17
+  Lite: true
+  num_classes: 2
+Model:
+  model_type: CamelyonMobileNet
+Training:
+  epochs: 20
+  lr: 0.001
+  weight_decay: 1.0e-05
+  batch_size: 64
+  n_repetitions: 10
+Optuna:
+  n_trials: 30

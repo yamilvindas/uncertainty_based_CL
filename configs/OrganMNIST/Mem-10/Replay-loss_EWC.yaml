@@ -1,0 +1,26 @@
+exp_id: OrganMNIST_Mem-10_ReplayEWC
+device: cuda:0
+results_dir: ./results
+ContinualLearning:
+  Replay:
+    use_replay: true
+    memory_strategy: loss
+    capacity: 0.1
+    lambda_replay: 1.0
+  EWC:
+    use_ewc: true
+    lambda_ewc: 1000.0
+Dataset:
+  dataset_type: OrganMNIST
+  Lite: true
+  num_classes: 11
+Model:
+  model_type: OrganCNN
+Training:
+  epochs: 20
+  lr: 0.001
+  weight_decay: 1.0e-05
+  batch_size: 64
+  n_repetitions: 10
+Optuna:
+  n_trials: 30
