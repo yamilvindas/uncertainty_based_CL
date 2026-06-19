@@ -212,7 +212,7 @@ class CLTrainer:
         self.reset_state(self.memory_strategy)
         print("\n\n==========> Trainer state reset with optimal hyperparameters. Ready for final run. <==========\n\n")
 
-    def _save_to_h5(self, group_path, preds, targets):
+    def _save_to_h5(self, group_path, preds, targets, probs=None):
         """
             Helper to save arrays to HDF5 dynamically.
         """
@@ -222,8 +222,12 @@ class CLTrainer:
                 del group['preds']
             if ('targets' in group):
                 del group['targets']
+            if ('probs' in group): 
+                del group['probs']
             group.create_dataset('preds', data=np.array(preds))
             group.create_dataset('targets', data=np.array(targets))
+            if (probs is not None):
+                group.create_dataset('probs', data=np.array(probs))
 
     def save_model(self, task_name):
         save_path = self.models_dir / f"model_{task_name}.pt"
@@ -257,6 +261,7 @@ class CLTrainer:
         # Get all the predictions
         all_preds = []
         all_labels = []
+        all_probs = []
         with torch.no_grad():
             for batch in test_loader:
                 # Get batch data
@@ -266,13 +271,16 @@ class CLTrainer:
                     x, y = batch
                 if (isinstance(y, tuple) or isinstance(y, list)):
                     y = y[0]
+
                 outputs = self.model(x.to(self.device))
+                probs = torch.softmax(outputs, dim=1) 
                 preds = torch.argmax(outputs, dim=1)
+                all_probs.extend(probs.cpu().numpy())
                 all_preds.extend(preds.cpu().numpy())
                 all_labels.extend(y.numpy())
                 
         metric = balanced_accuracy_score(all_labels, all_preds)
-        return metric, all_preds, all_labels
+        return metric, all_preds, all_labels, all_probs
 
     def train_single_task(self, task_name, train_loader, eval_loaders_dict, rep, save_results=True):
         # Activate train mode
@@ -372,11 +380,11 @@ class CLTrainer:
 
             # Evaluate at the end of epoch
             for eval_name, loader in eval_loaders_dict.items():
-                metric, preds, targets = self.evaluate(loader)
+                metric, preds, targets, probs = self.evaluate(loader)
                 if save_results:
                     # Dynamically prepend the Repetition Index to the HDF5 group
                     h5_group = f"Rep_{rep}/{task_name}/epoch_{epoch}/{eval_name}"
-                    self._save_to_h5(h5_group, preds, targets)
+                    self._save_to_h5(h5_group, preds, targets, probs)
 
                 print(f"[{task_name}] Epoch {epoch+1}/{epochs} - {eval_name} Bal Acc.: {metric:.4f}")
 
@@ -386,9 +394,9 @@ class CLTrainer:
 
         # Get the per-task results
         for eval_name, loader in eval_loaders_dict.items():
-            metric, preds, targets = self.evaluate(loader)
+            metric, preds, targets, probs = self.evaluate(loader)
             if (save_results):
-                self._save_to_h5(f"Rep_{rep}/{phase_name}/{eval_name}", preds, targets)
+                self._save_to_h5(f"Rep_{rep}/{phase_name}/{eval_name}", preds, targets, probs)
             results[eval_name] = metric
         return results
 
@@ -546,7 +554,6 @@ def main():
     # Add the arguments to the parser
     ap.add_argument('--parameters_file', required=True, help="Yaml parameters for the experiment", type=str)
     ap.add_argument('--seed', default=42, help="Seed to use for the experiment", type=int)
-    ap.add_argument('--plot_curves', help="Activate if want to plot some curves", action='store_true')
     args = vars(ap.parse_args())
 
     # Getting the value of the arguments
@@ -554,7 +561,6 @@ def main():
     with open(parameters_file, 'r') as file:
         config = yaml.safe_load(file)
     seed = args['seed']
-    plot_curves = args['plot_curves']
     config['Seed'] = seed
 
     # Fix seed

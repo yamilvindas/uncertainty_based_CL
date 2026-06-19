@@ -120,8 +120,8 @@ except Exception as e:
 
     # Run the model training pipeline
     set +e
-    python "$MAIN_SCRIPT" --config "$config_file"
-    # printf "python $MAIN_SCRIPT --config $config_file"
+    printf "python $MAIN_SCRIPT --parameters_file $config_file"
+    python "$MAIN_SCRIPT" --parameters_file "$config_file"
     EXIT_CODE=$?
     set -e
 
