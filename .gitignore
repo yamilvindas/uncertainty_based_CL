@@ -1,4 +1,5 @@
-./data/
-results/
-src/experiments/OLD/
 *__pycache__*
+.venv/
+completed_runs.log
+data/
+results/
