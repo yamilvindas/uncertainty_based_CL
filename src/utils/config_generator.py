@@ -149,7 +149,11 @@ def generate_all_configs(generate_EWC_Replay_combination=True):
             folder_path = os.path.join(base_dir, dataset, mem_folder)
 
             # Possible strategies
-            mem_select_strategies = ['uniform', 'uncertainty', 'loss', 'dissimilarity']
+            if (capacity_ratio == 1.00):
+                # In this case we kepp ALL the samples so all sample selection methods are the same
+                mem_select_strategies = ['uniform']
+            else:
+                mem_select_strategies = ['uniform', 'uncertainty', 'loss', 'dissimilarity']
             for mem_strategy in mem_select_strategies:
                 # ===> Replay Only <===
                 replay_only = build_base_config(dataset)
