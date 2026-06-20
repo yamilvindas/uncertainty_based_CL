@@ -58,7 +58,11 @@ class CLTrainer:
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
         self.memories_dir = self.res_dir / "memories"
         self.memories_dir.mkdir(parents=True, exist_ok=True)
-        self.h5_path = self.metrics_dir / "predictions.h5"
+        # Avoid overwriting previous files
+        i = 0
+        while (os.path.exists(self.metrics_dir / f"predictions_{i}.h5")):
+            i += 1
+        self.h5_path = self.metrics_dir / f"predictions_{i}.h5"
         
         # Initialize an empty HDF5 file
         with h5py.File(self.h5_path, 'w') as f:
@@ -149,7 +153,7 @@ class CLTrainer:
                 self.config['ContinualLearning']['Replay']['we'] = we
                 self.config['ContinualLearning']['Replay']['wH'] = wH
                 self.config['ContinualLearning']['Replay']['wa'] = wa
-                self.config['alea_drop_fraction']['Replay']['alea_drop_fraction'] = alea_drop_fraction
+                self.config['ContinualLearning']['Replay']['alea_drop_fraction'] = alea_drop_fraction
 
                 
             # Temporarily inject suggested params into the configuration state

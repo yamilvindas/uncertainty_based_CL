@@ -75,12 +75,25 @@ import yaml
 try:
     with open('$config_file', 'r') as f:
         cfg = yaml.safe_load(f)
-        res_dir = cfg.get('results_dir', './results')
-        exp_id = cfg.get('exp_id', 'unknown')
+        # Results directory
+        res_dir = cfg['results_dir']
+        # Exp ID as defined in main_experiments.py
+        exp_id = cfg['exp_id']
+        # Replay memory
+        if (cfg['ContinualLearning']['Replay'].get('use_replay', False)):
+            mem_strategy = cfg['ContinualLearning']['Replay'].get('memory_strategy', 'Uniform')
+            mem_capacity = cfg['ContinualLearning']['Replay']['capacity']
+            exp_id += f'_MemStrategy-{mem_strategy}_MemCapacity-{mem_capacity}'
+        # EWC
+        if (cfg['ContinualLearning']['EWC'].get('use_ewc', False)):
+            exp_id += '_EWC-True'
+        else:
+            exp_id += '_EWC-False'
         print(f'{res_dir}|{exp_id}')
 except Exception as e:
     print('ERROR')
 " 2>/dev/null)
+
 
     if [ "$metadata" = "ERROR" ] || [ -z "$metadata" ]; then
         echo "[WARNING] Could not parse configuration file: $config_file. Skipping."
@@ -92,7 +105,7 @@ except Exception as e:
     EXP_ID=$(echo "$metadata" | cut -d'|' -f2)
     
     # Path where HDF5 predictions are located
-    TARGET_H5="$RESULTS_DIR/$EXP_ID/predictions.h5"
+    TARGET_H5="$RESULTS_DIR/$EXP_ID/metrics/predictions_0.h5"
 
     # Progress/Resume verification conditions:
     # Check if recorded in the log, and verify the physical HDF5 file exists and is not empty.
