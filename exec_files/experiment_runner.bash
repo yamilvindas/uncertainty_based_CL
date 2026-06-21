@@ -15,7 +15,7 @@ export PYTHONPATH="${PYTHONPATH}:./uncertainty_based_CL/"
 # Ensure the progress log exists
 touch "$PROGRESS_LOG"
 
-# Clean clean shutdown on Ctrl+C (SIGINT)
+# Clean shutdown on Ctrl+C (SIGINT)
 cleanup() {
     echo -e "\n\n[INFO] Script execution interrupted by user. Exiting gracefully..."
     exit 130
@@ -26,8 +26,10 @@ echo "=========================================================="
 echo "    Continual Learning Ordered Runner (With Resume)       "
 echo "=========================================================="
 echo "Enforcing execution order:"
-echo " 1. OrganMNIST (Baselines -> Mem-1 -> ... -> Mem-100)"
-echo " 2. Camelyon17  (Baselines -> Mem-1 -> ... -> Mem-100)"
+echo " 1. Datasets: OrganMNIST -> Camelyon17"
+echo " 2. Approaches: Baseline -> Mem-1 -> ... -> Mem-100"
+echo " 3. Memory Strategies: uniform -> loss -> dissimilarity -> uncertainty"
+echo " 4. Modifiers: No EWC (NoMemory/Standard Replay) -> With EWC"
 echo "----------------------------------------------------------"
 
 # Define the precise datasets and folder sequence to build the queue
@@ -41,13 +43,57 @@ for ds in "${DATASETS[@]}"; do
         target_dir="$CONFIGS_DIR/$ds/$seq_folder"
         
         if [ -d "$target_dir" ]; then
-            # Find and sort files in this directory to maintain a stable alphabetical run order
-            # (e.g., running Replay.yaml before ReplayEWC.yaml)
+            # Unified Python sorter for ALL directories
+            ordered_files=$(python3 -c '
+import os, sys, yaml
+target_dir = sys.argv[1]
+# Desired order index for strategies
+strategies_order = {"uniform": 0, "loss": 1, "dissimilarity": 2, "uncertainty": 3}
+
+files = [f for f in os.listdir(target_dir) if f.endswith(".yaml") or f.endswith(".yml")]
+file_info = []
+
+for f in files:
+    path = os.path.join(target_dir, f)
+    try:
+        with open(path, "r") as file:
+            cfg = yaml.safe_load(file)
+            
+            # Extract Continual Learning values safely
+            cl_cfg = cfg.get("ContinualLearning", {})
+            replay_cfg = cl_cfg.get("Replay", {})
+            ewc_cfg = cl_cfg.get("EWC", {})
+            
+            use_replay = replay_cfg.get("use_replay", False)
+            use_ewc = ewc_cfg.get("use_ewc", False)
+            
+            # Strategy ordering: Baselines map to -1 so they are handled cleanly
+            if use_replay:
+                strategy = replay_cfg.get("memory_strategy", "uniform").lower()
+                strat_idx = strategies_order.get(strategy, 99)
+            else:
+                strat_idx = -1
+                
+            # Tuple: (Strategy Rank, EWC Rank (False/0 before True/1), File Path)
+            file_info.append((strat_idx, int(use_ewc), path))
+    except Exception as e:
+        # Fallback for unparseable files
+        file_info.append((99, 0, path))
+
+# Sort by strategy first, then EWC status, then alphabetical path
+file_info.sort(key=lambda x: (x[0], x[1], x[2]))
+
+# Output ordered paths to bash
+for info in file_info:
+    print(info[2])
+' "$target_dir")
+            
+            # Append the Python-ordered files to the bash array
             while IFS= read -r file; do
                 if [ -n "$file" ]; then
                     QUEUE+=("$file")
                 fi
-            done < <(find "$target_dir" -maxdepth 1 -type f \( -name "*.yaml" -o -name "*.yml" \) | sort)
+            done <<< "$ordered_files"
         fi
     done
 done
@@ -69,31 +115,35 @@ idx=0
 for config_file in "${QUEUE[@]}"; do
     idx=$((idx + 1))
     
-    # Extract metadata safely using a fast inline Python execution
-    metadata=$(python -c "
-import yaml
+    # Extract metadata safely using a robust Python execution with single quotes
+    metadata=$(python3 -c '
+import yaml, sys
 try:
-    with open('$config_file', 'r') as f:
+    with open(sys.argv[1], "r") as f:
         cfg = yaml.safe_load(f)
-        # Results directory
-        res_dir = cfg['results_dir']
-        # Exp ID as defined in main_experiments.py
-        exp_id = cfg['exp_id']
-        # Replay memory
-        if (cfg['ContinualLearning']['Replay'].get('use_replay', False)):
-            mem_strategy = cfg['ContinualLearning']['Replay'].get('memory_strategy', 'Uniform')
-            mem_capacity = cfg['ContinualLearning']['Replay']['capacity']
-            exp_id += f'_MemStrategy-{mem_strategy}_MemCapacity-{mem_capacity}'
-        # EWC
-        if (cfg['ContinualLearning']['EWC'].get('use_ewc', False)):
-            exp_id += '_EWC-True'
+        
+        res_dir = cfg.get("results_dir", "./results")
+        exp_id = cfg.get("exp_id", "unknown")
+        
+        # Build strict dynamic EXP_ID matching your main logic
+        cl_cfg = cfg.get("ContinualLearning", {})
+        
+        # Replay memory tags
+        if cl_cfg.get("Replay", {}).get("use_replay", False):
+            mem_strategy = cl_cfg["Replay"].get("memory_strategy", "Uniform")
+            mem_capacity = cl_cfg["Replay"].get("capacity", 0.1)
+            exp_id += f"_MemStrategy-{mem_strategy}_MemCapacity-{mem_capacity}"
+            
+        # EWC tags
+        if cl_cfg.get("EWC", {}).get("use_ewc", False):
+            exp_id += "_EWC-True"
         else:
-            exp_id += '_EWC-False'
-        print(f'{res_dir}|{exp_id}')
+            exp_id += "_EWC-False"
+            
+        print(f"{res_dir}|{exp_id}")
 except Exception as e:
-    print('ERROR')
-" 2>/dev/null)
-
+    print("ERROR")
+' "$config_file" 2>/dev/null)
 
     if [ "$metadata" = "ERROR" ] || [ -z "$metadata" ]; then
         echo "[WARNING] Could not parse configuration file: $config_file. Skipping."
@@ -108,7 +158,6 @@ except Exception as e:
     TARGET_H5="$RESULTS_DIR/$EXP_ID/metrics/predictions_0.h5"
 
     # Progress/Resume verification conditions:
-    # Check if recorded in the log, and verify the physical HDF5 file exists and is not empty.
     if grep -qF "$config_file" "$PROGRESS_LOG" && [ -s "$TARGET_H5" ]; then
         echo "[$idx/$total_configs] [SKIP] Completed -> $EXP_ID"
         skip_count=$((skip_count + 1))
@@ -133,8 +182,8 @@ except Exception as e:
 
     # Run the model training pipeline
     set +e
-    printf "python $MAIN_SCRIPT --parameters_file $config_file"
-    python "$MAIN_SCRIPT" --parameters_file "$config_file"
+    printf "python %s --parameters_file %s\n" "$MAIN_SCRIPT" "$config_file"
+    python3 "$MAIN_SCRIPT" --parameters_file "$config_file"
     EXIT_CODE=$?
     set -e
 
