@@ -204,13 +204,16 @@ class CLTrainer:
                 we = trial.suggest_float("we", 0.0, 2.0)
                 wH = trial.suggest_float("wH", 0.0, 2.0)
                 wa = trial.suggest_float("wa", 0.0, 2.0)
-                alea_drop_fraction = trial.suggest_float("alea_drop_fraction", 0.0, 0.50)
+                alea_drop_fraction = trial.suggest_float("alea_drop_fraction", 0.0, 1.0)
                 
                 # Temporarily inject suggested params into the configuration state
                 self.config['ContinualLearning']['Replay']['we'] = we
                 self.config['ContinualLearning']['Replay']['wH'] = wH
                 self.config['ContinualLearning']['Replay']['wa'] = wa
                 self.config['ContinualLearning']['Replay']['alea_drop_fraction'] = alea_drop_fraction
+            if (self.memory_strategy.lower() in ['uncertainty', 'loss']) and (self.current_task.lower() != "task_a"):
+                uniform_ratio = trial.suggest_float("alea_drop_fraction", 0.0, 1.0)
+                self.config['ContinualLearning']['Replay']['uniform_ratio'] = uniform_ratio
 
                 
             # Temporarily inject suggested params into the configuration state
@@ -354,6 +357,8 @@ class CLTrainer:
                 self.config['ContinualLearning']['Replay']['wH'] = best_params['wH']
                 self.config['ContinualLearning']['Replay']['wa'] = best_params['wa']
                 self.config['ContinualLearning']['Replay']['alea_drop_fraction'] = best_params['alea_drop_fraction']
+        if (self.memory_strategy.lower() in ['uncertainty', 'loss']) and (self.current_task.lower() != "task_a"):
+            self.config['ContinualLearning']['Replay']['uniform_ratio'] = best_params['uniform_ratio']
 
     def _save_to_h5(self, group_path, preds, targets, probs=None):
         """
@@ -459,7 +464,7 @@ class CLTrainer:
                     if (self.memory_strategy.lower() == 'uniform'):
                         self.memory.update_uniform(x, y)
                     elif (self.memory_strategy.lower() == 'loss'):
-                        self.memory.update_loss_based(x, y, self.model, self.criterion)
+                        self.memory.update_loss_based(x, y, self.model, self.criterion, uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5))
                     elif (self.memory_strategy.lower() == 'uncertainty'):
                         self.memory.update_uncertainty_based(
                                                                 new_x=x,
@@ -469,7 +474,8 @@ class CLTrainer:
                                                                 wH=self.config['ContinualLearning']['Replay']['wH'],
                                                                 wa=self.config['ContinualLearning']['Replay']['wa'],
                                                                 alea_drop_fraction=self.config['ContinualLearning']['Replay']['alea_drop_fraction'],
-                                                                mc_passes=self.config['ContinualLearning']['Replay']['mc_passes']
+                                                                mc_passes=self.config['ContinualLearning']['Replay']['mc_passes'],
+                                                                uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5)
                                                             )
                     elif (self.memory_strategy.lower() == 'dissimilarity'):
                         self.memory.update_feature_dissimilarity(x, y, self.model)
@@ -790,7 +796,7 @@ def main():
     # Define number of possible samples in the memory 
     mem_capacity_samples = int(config['ContinualLearning']['Replay']['capacity']*data_handler.n_all_train_samples)
     config['ContinualLearning']['Replay']['capacity_in_n_samples'] = mem_capacity_samples
-    print(f"\n\n==========> Memory capacity in number of samples: {mem_capacity_samples} (~{config['ContinualLearning']['Replay']['capacity']}%)")
+    print(f"\n\n==========> Memory capacity in number of samples: {mem_capacity_samples} (~{config['ContinualLearning']['Replay']['capacity']})")
 
     #====================================================================================================#
     # Initialize Trainer (Model is created internally based on YAML)

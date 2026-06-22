@@ -42,9 +42,16 @@ class MemoryBuffer:
                     self.buffer_y[j] = new_y[i].cpu()
             self.seen_samples += 1
 
-    def update_loss_based(self, new_x, new_y, model, criterion):
+    def update_loss_based(
+                            self,
+                            new_x,
+                            new_y,
+                            model,
+                            criterion,
+                            uniform_ratio=0.5
+                        ):
         """
-            Retain samples with the highest loss (hardest examples)
+            Hybrid sampling: Retain X% uniformly, and the rest based on highest loss (hardest examples)
         """
         model.eval()
         with torch.no_grad():
@@ -63,16 +70,55 @@ class MemoryBuffer:
         else:
             all_losses = losses
 
-        # Get indices of top 'capacity' losses
-        top_indices = torch.topk(all_losses, min(self.capacity, len(all_losses))).indices
+        # Get the total number of sampls to process
+        pool_size = len(all_x)
+        target_capacity = min(self.capacity, pool_size)
         
-        self.buffer_x = [all_x[i] for i in top_indices]
-        self.buffer_y = [all_y[i] for i in top_indices]
+        # If we haven't reached capacity, just keep everything
+        if (pool_size <= target_capacity):
+            self.buffer_x = all_x
+            self.buffer_y = all_y
+            return
 
-    def update_uncertainty_based(self, new_x, new_y, model, we=1.0, wH=0.1, wa=0.1, alea_drop_fraction=0.15, mc_passes=10):
+        # Calculate exact counts for the split
+        num_uniform = int(target_capacity * uniform_ratio)
+        num_strategic = target_capacity - num_uniform
+        all_indices = np.arange(pool_size)
+
+        # Uniform Selection
+        uniform_indices = np.random.choice(all_indices, num_uniform, replace=False)
+
+        # Strategic (Loss-based) Selection from the REMAINING candidates
+        remaining_mask = np.ones(pool_size, dtype=bool)
+        remaining_mask[uniform_indices] = False
+        remaining_indices = all_indices[remaining_mask]
+        remaining_losses = all_losses[remaining_indices]
+
+        # Get indices of top 'num_strategic' losses from the remaining pool
+        top_k_relative = torch.topk(remaining_losses, num_strategic).indices
+        strategic_indices = remaining_indices[top_k_relative.numpy()]
+
+        # Combine both selections
+        final_selected_indices = np.concatenate([uniform_indices, strategic_indices])
+        
+        self.buffer_x = [all_x[i] for i in final_selected_indices]
+        self.buffer_y = [all_y[i] for i in final_selected_indices]
+
+    def update_uncertainty_based(
+                                    self,
+                                    new_x,
+                                    new_y,
+                                    model,
+                                    we=1.0,
+                                    wH=0.1,
+                                    wa=0.1,
+                                    alea_drop_fraction=0.15,
+                                    mc_passes=10,
+                                    uniform_ratio=0.5
+                                ):
         """
-            Advanced uncertainty curation balancing Epistemic exploration, Entropy maximization,
-            and Aleatoric noise mitigation.
+            Hybrid sampling: Retain X% uniformly, and the rest using advanced uncertainty curation 
+            balancing Epistemic exploration, Entropy maximization, and Aleatoric noise mitigation.
         """
         #====================================================================================================#
         #====================================================================================================#
@@ -90,7 +136,6 @@ class MemoryBuffer:
         #====================================================================================================#
         #====================================================================================================#
         # Uncertainties computation (per sample)
-        uncertainties = []
         inputs = torch.stack(all_x).to(self.device)
 
         raw_epistemic = []
@@ -152,40 +197,66 @@ class MemoryBuffer:
         #====================================================================================================#
         # Filter out highly noisy (high aleatoric) outliers using your percentile logic
         pool_size = len(all_x)
-        # How many samples do we mathematically NEED to keep?
         target_capacity = min(self.capacity, pool_size)
-        # What is the maximum number of samples we can theoretically drop without starving the buffer?
+        
+        # If we haven't reached capacity, just keep everything
+        if (pool_size <= target_capacity):
+            self.buffer_x = all_x
+            self.buffer_y = all_y
+            return
+
+        # Calculate exact counts for the split
+        num_uniform = int(target_capacity * uniform_ratio)
+        num_strategic = target_capacity - num_uniform
+        all_indices = np.arange(pool_size)
+
+        # Uniform Selection
+        uniform_indices = np.random.choice(all_indices, num_uniform, replace=False)
+
+        # Create mask to ONLY consider the remaining unpicked samples for strategy
+        remaining_mask = np.ones(pool_size, dtype=bool)
+        remaining_mask[uniform_indices] = False
+        
+        # Filter out highly noisy (high aleatoric) outliers using percentile logic
         max_droppable = pool_size - target_capacity
-        # Intended drop amount based on hyperparameter
         intended_drop = int(pool_size * alea_drop_fraction)
-        # The ACTUAL allowed drop count (constrained to prevent starvation)
         actual_drop = min(intended_drop, max_droppable)
+        
         if (actual_drop > 0):
-            # Calculate the safe percentile based on the actual allowed drop count
             keep_percentage = 100.0 * (pool_size - actual_drop) / pool_size
             aleatoric_cut = np.percentile(ua_mean, keep_percentage)
             candidate_mask = (ua_mean <= aleatoric_cut)
         else:
-            # We cannot afford to drop anything without starving the buffer; keep all as candidates
             candidate_mask = np.ones_like(ua_mean, dtype=bool)
-        # Fallback safeguard: if all elements somehow got masked out
-        if not np.any(candidate_mask):
+            
+        if (not np.any(candidate_mask)):
             candidate_mask = np.ones_like(ua_mean, dtype=bool)
         
+        # The candidates MUST be within the remaining pool (we cannot re-pick uniform ones)
+        valid_strategic_mask = candidate_mask & remaining_mask
+        
+        # Fallback if noise filtering was too aggressive and wiped out all remaining items
+        if not np.any(valid_strategic_mask):
+            valid_strategic_mask = remaining_mask
+
         #====================================================================================================#
         #====================================================================================================#
-        # Get candidate indices
-        candidate_indices = np.where(candidate_mask)[0]
-        candidate_scores = scores[candidate_mask]
+        # Get candidate indices and scores
+        candidate_indices = np.where(valid_strategic_mask)[0]
+        candidate_scores = scores[valid_strategic_mask]
+
+        #====================================================================================================#
+        #====================================================================================================#
+        # Extract top performing candidates up to remaining strategic capacity
+        top_candidate_sort_idx = np.argsort(candidate_scores)[::-1][:num_strategic]
+        strategic_indices = candidate_indices[top_candidate_sort_idx]
+
         
         #====================================================================================================#
         #====================================================================================================#
-        # Extract top performing candidates up to buffer capacity
-        top_candidate_sort_idx = np.argsort(candidate_scores)[::-1][:self.capacity]
-        final_selected_indices = candidate_indices[top_candidate_sort_idx]
-        
-        #====================================================================================================#
-        #====================================================================================================#
+        # Combine both selections
+        final_selected_indices = np.concatenate([uniform_indices, strategic_indices])
+
         # Commit chosen tensors back to storage
         self.buffer_x = [all_x[i] for i in final_selected_indices]
         self.buffer_y = [all_y[i] for i in final_selected_indices]

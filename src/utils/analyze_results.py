@@ -131,11 +131,11 @@ def analyze_h5_experiment(h5_path):
             
             # --- Forgetting & Backward Transfer (Focus on Task A) ---
             if ('Test_Task_A' in results['Phase_Post_Task_A']) and ('Test_Task_A' in results['Phase_Post_Task_B']):
-                R_A_A = np.array(results['Phase_Post_Task_A']['Test_Task_A'][metric])
-                R_B_A = np.array(results['Phase_Post_Task_B']['Test_Task_A'][metric])
+                R_post_A_A = np.array(results['Phase_Post_Task_A']['Test_Task_A'][metric])
+                R_post_B_A = np.array(results['Phase_Post_Task_B']['Test_Task_A'][metric])
                 
-                forgetting = R_A_A - R_B_A
-                bwt = R_B_A - R_A_A
+                forgetting = R_post_A_A - R_post_B_A
+                bwt = R_post_B_A - R_post_A_A
                 
                 print(f"  - Forgetting (Task A) : {np.mean(forgetting)*100:+.4f} ± {np.std(forgetting)*100:.4f}  (Lower is better)")
                 print(f"  - Backward Transfer   : {np.mean(bwt)*100:+.4f} ± {np.std(bwt)*100:.4f}  (Higher is better)")
@@ -143,10 +143,10 @@ def analyze_h5_experiment(h5_path):
             # ===> Forward Transfer (Focus on Task B) <===
             # FWT = Performance on B after learning A - Performance on B before learning anything
             if ('Test_Task_B' in results['Phase_PreTraining']) and ('Test_Task_B' in results['Phase_Post_Task_A']):
-                R_0_B = np.array(results['Phase_PreTraining']['Test_Task_B'][metric])
-                R_A_B = np.array(results['Phase_Post_Task_A']['Test_Task_B'][metric])
+                R_pretraining_B = np.array(results['Phase_PreTraining']['Test_Task_B'][metric])
+                R_post_A_B = np.array(results['Phase_Post_Task_A']['Test_Task_B'][metric])
                 
-                fwt = R_A_B - R_0_B
+                fwt = R_post_A_B - R_pretraining_B
                 print(f"  - Forward Transfer    : {np.mean(fwt)*100:+.4f} ± {np.std(fwt)*100:.4f}  (Higher is better)")
     else:
         print("[INFO] Not all training phases are present to compute Continual Learning metrics.")

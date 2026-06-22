@@ -170,6 +170,8 @@ def generate_all_configs(generate_EWC_Replay_combination=True):
                     replay_only['ContinualLearning']['Replay']['wa'] = 1.0
                     replay_only['ContinualLearning']['Replay']['alea_drop_fraction'] = 0.15
                     replay_only['ContinualLearning']['Replay']['mc_passes'] = 10
+                if (mem_strategy.lower() in ['uncertainty', 'loss']):
+                    replay_only['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
                 
                 write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}.yaml"), replay_only)
                 
@@ -189,6 +191,8 @@ def generate_all_configs(generate_EWC_Replay_combination=True):
                         replay_ewc['ContinualLearning']['Replay']['wa'] = 1.0
                         replay_ewc['ContinualLearning']['Replay']['alea_drop_fraction'] = 0.15
                         replay_ewc['ContinualLearning']['Replay']['mc_passes'] = 10
+                    if (mem_strategy.lower() in ['uncertainty', 'loss']):
+                        replay_ewc['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
                     write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}_EWC.yaml"), replay_ewc)
 
 if __name__ == "__main__":
