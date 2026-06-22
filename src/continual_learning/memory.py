@@ -74,11 +74,22 @@ class MemoryBuffer:
             Advanced uncertainty curation balancing Epistemic exploration, Entropy maximization,
             and Aleatoric noise mitigation.
         """
-        # Keep Dropout active for Monte Carlo sampling
-        model.train() # Enable Dropout
+        #====================================================================================================#
+        #====================================================================================================#
+        # Selectively turn on Dropout layers for the Monte Carlo passes
+        # NOTE: we do not use model.train() to avoid updating the mean of batch norm layers if they exists !
+        def enable_dropout(m):
+            if type(m) == torch.nn.Dropout or type(m) == torch.nn.Dropout2d:
+                m.train()
+        model.apply(enable_dropout)
+
+        # Define full set of samples (samples n memory + current batch of incoming samples)
         all_x = self.buffer_x + list(new_x.cpu())
         all_y = self.buffer_y + list(new_y.cpu())
-        
+
+        #====================================================================================================#
+        #====================================================================================================#
+        # Uncertainties computation (per sample)
         uncertainties = []
         inputs = torch.stack(all_x).to(self.device)
 
@@ -111,12 +122,13 @@ class MemoryBuffer:
                 raw_aleatoric.extend(aleatoric.cpu().numpy())
                 raw_entropy.extend(total_entropy.cpu().numpy())
 
-
         # Get the uncertainties
         ua_mean = np.array(raw_aleatoric)
         ue_mean = np.array(raw_epistemic)
         h_mean = np.array(raw_entropy)
         
+        #====================================================================================================#
+        #====================================================================================================#
         # Min-Max Normalization Helper
         def min_max_normalize(arr):
             denominator = arr.max() - arr.min()
@@ -128,26 +140,52 @@ class MemoryBuffer:
         aleatoric_norm = min_max_normalize(ua_mean)
         entropy_norm = min_max_normalize(h_mean)
         
+        #====================================================================================================#
+        #====================================================================================================#
         # Compute Composite Curation Scores
         # NOTE: epistemic measures model ignorance, so this term ensures the memory buffer captures the diversity of the data manifold, pulling in rare edge cases and minority groups.
         # NOTE: aleatoric measures data noice, so this term tries to reduce data noise in the memory.
         # NOTE: the predictive entropy (similar or equivalent to total uncertainty) acts as the "Decision Boundary" anchor, as it measures the flatness of the output probabilities. This term is important as forgetting happens at the boundaries, entropy finds the boundaries to perform hard mining.
         scores = we * epistemic_norm + wH * entropy_norm - wa * aleatoric_norm
         
-        # 4. Filter out highly noisy (high aleatoric) outliers using your percentile logic
-        aleatoric_cut = np.percentile(ua_mean, 100 - alea_drop_fraction*100)  
-        candidate_mask = (ua_mean <= aleatoric_cut)
-        
-        # Fallback safeguard: if all elements are identical, keep all as candidates
-        if (not np.any(candidate_mask)):
+        #====================================================================================================#
+        #====================================================================================================#
+        # Filter out highly noisy (high aleatoric) outliers using your percentile logic
+        pool_size = len(all_x)
+        # How many samples do we mathematically NEED to keep?
+        target_capacity = min(self.capacity, pool_size)
+        # What is the maximum number of samples we can theoretically drop without starving the buffer?
+        max_droppable = pool_size - target_capacity
+        # Intended drop amount based on hyperparameter
+        intended_drop = int(pool_size * alea_drop_fraction)
+        # The ACTUAL allowed drop count (constrained to prevent starvation)
+        actual_drop = min(intended_drop, max_droppable)
+        if (actual_drop > 0):
+            # Calculate the safe percentile based on the actual allowed drop count
+            keep_percentage = 100.0 * (pool_size - actual_drop) / pool_size
+            aleatoric_cut = np.percentile(ua_mean, keep_percentage)
+            candidate_mask = (ua_mean <= aleatoric_cut)
+        else:
+            # We cannot afford to drop anything without starving the buffer; keep all as candidates
             candidate_mask = np.ones_like(ua_mean, dtype=bool)
+        # Fallback safeguard: if all elements somehow got masked out
+        if not np.any(candidate_mask):
+            candidate_mask = np.ones_like(ua_mean, dtype=bool)
+        
+        #====================================================================================================#
+        #====================================================================================================#
+        # Get candidate indices
         candidate_indices = np.where(candidate_mask)[0]
         candidate_scores = scores[candidate_mask]
         
+        #====================================================================================================#
+        #====================================================================================================#
         # Extract top performing candidates up to buffer capacity
         top_candidate_sort_idx = np.argsort(candidate_scores)[::-1][:self.capacity]
         final_selected_indices = candidate_indices[top_candidate_sort_idx]
         
+        #====================================================================================================#
+        #====================================================================================================#
         # Commit chosen tensors back to storage
         self.buffer_x = [all_x[i] for i in final_selected_indices]
         self.buffer_y = [all_y[i] for i in final_selected_indices]

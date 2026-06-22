@@ -109,8 +109,8 @@ def analyze_h5_experiment(h5_path):
                 
             print(f"  Dataset: {dataset}")
             for metric, values in metrics_dict.items():
-                mean_val = np.mean(values)
-                std_val = np.std(values)
+                mean_val = np.mean(values)*100
+                std_val = np.std(values)*100
                 print(f"    - {metric:<15}: {mean_val:.4f} ± {std_val:.4f}")
 
     # =========================================================
@@ -123,31 +123,31 @@ def analyze_h5_experiment(h5_path):
     # Ensure all required phases exist before computing CL metrics
     required_phases = ['Phase_PreTraining', 'Phase_Post_Task_A', 'Phase_Post_Task_B']
     if all(p in results for p in required_phases):
-        # We base available metrics on what was calculated for Test_A post Task_A
-        available_metrics = results['Phase_Post_Task_A']['Test_A'].keys()
+        # We base available metrics on what was calculated for Test_Task_A post Task_A
+        available_metrics = results['Phase_Post_Task_A']['Test_Task_A'].keys()
         
         for metric in available_metrics:
             print(f"\n[{metric.upper()}]")
             
             # --- Forgetting & Backward Transfer (Focus on Task A) ---
-            if ('Test_A' in results['Phase_Post_Task_A']) and ('Test_A' in results['Phase_Post_Task_B']):
-                R_A_A = np.array(results['Phase_Post_Task_A']['Test_A'][metric])
-                R_B_A = np.array(results['Phase_Post_Task_B']['Test_A'][metric])
+            if ('Test_Task_A' in results['Phase_Post_Task_A']) and ('Test_Task_A' in results['Phase_Post_Task_B']):
+                R_A_A = np.array(results['Phase_Post_Task_A']['Test_Task_A'][metric])
+                R_B_A = np.array(results['Phase_Post_Task_B']['Test_Task_A'][metric])
                 
                 forgetting = R_A_A - R_B_A
                 bwt = R_B_A - R_A_A
                 
-                print(f"  - Forgetting (Task A) : {np.mean(forgetting):+.4f} ± {np.std(forgetting):.4f}  (Lower is better)")
-                print(f"  - Backward Transfer   : {np.mean(bwt):+.4f} ± {np.std(bwt):.4f}  (Higher is better)")
+                print(f"  - Forgetting (Task A) : {np.mean(forgetting)*100:+.4f} ± {np.std(forgetting)*100:.4f}  (Lower is better)")
+                print(f"  - Backward Transfer   : {np.mean(bwt)*100:+.4f} ± {np.std(bwt)*100:.4f}  (Higher is better)")
             
             # ===> Forward Transfer (Focus on Task B) <===
             # FWT = Performance on B after learning A - Performance on B before learning anything
-            if ('Test_B' in results['Phase_PreTraining']) and ('Test_B' in results['Phase_Post_Task_A']):
-                R_0_B = np.array(results['Phase_PreTraining']['Test_B'][metric])
-                R_A_B = np.array(results['Phase_Post_Task_A']['Test_B'][metric])
+            if ('Test_Task_B' in results['Phase_PreTraining']) and ('Test_Task_B' in results['Phase_Post_Task_A']):
+                R_0_B = np.array(results['Phase_PreTraining']['Test_Task_B'][metric])
+                R_A_B = np.array(results['Phase_Post_Task_A']['Test_Task_B'][metric])
                 
                 fwt = R_A_B - R_0_B
-                print(f"  - Forward Transfer    : {np.mean(fwt):+.4f} ± {np.std(fwt):.4f}  (Higher is better)")
+                print(f"  - Forward Transfer    : {np.mean(fwt)*100:+.4f} ± {np.std(fwt)*100:.4f}  (Higher is better)")
     else:
         print("[INFO] Not all training phases are present to compute Continual Learning metrics.")
         

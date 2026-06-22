@@ -204,7 +204,7 @@ class CLTrainer:
                 we = trial.suggest_float("we", 0.0, 2.0)
                 wH = trial.suggest_float("wH", 0.0, 2.0)
                 wa = trial.suggest_float("wa", 0.0, 2.0)
-                alea_drop_fraction = trial.suggest_float("alea_drop_fraction", 0.0, 1.0)
+                alea_drop_fraction = trial.suggest_float("alea_drop_fraction", 0.0, 0.50)
                 
                 # Temporarily inject suggested params into the configuration state
                 self.config['ContinualLearning']['Replay']['we'] = we
@@ -473,6 +473,12 @@ class CLTrainer:
                                                             )
                     elif (self.memory_strategy.lower() == 'dissimilarity'):
                         self.memory.update_feature_dissimilarity(x, y, self.model)
+
+        # Raise error if memory not full and data loader number of samples > capacitY
+        n_samples_in_memory = len(self.memory.buffer_x)
+        n_samples_dataloader = len(dataloader.dataset)
+        if (self.memory.capacity <= n_samples_dataloader) and (n_samples_in_memory != self.memory.capacity):
+            raise RuntimeError(f"PROBLEM: the replay-memory is not full even though there are more samples in the previous task than the memory capacity (memory_capacity = {self.memory.capacity}, current number of samples in the memory: {n_samples_in_memory}, total number of samples in previous task: {n_samples_dataloader}).")
 
     def train_single_task(self, task_name, train_loader, eval_loaders_dict, rep, save_results=True):
         # Update memory if necessary
