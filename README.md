@@ -66,7 +66,7 @@ python src/experiments/main\_experiment.py \--parameters\_file configs/OrganMNIS
 Each completed experiment generates a structured folder inside ./results/EXP-ID/, containing:
 
 * 📁 **memories/**: Contains 2D t-SNE projections showing the memory buffer distributed across the full training manifold (empty if no replay strategy is used).  
-* 📁 **metrics/**: Contains the OPTUNA .db tracking file and predictions.h5. The HDF5 file logs all model predictions, targets, and probabilities across training phases.  
+* 📁 **metrics/**: Contains the OPTUNA .db tracking file and predictions_i.h5. The HDF5 file logs all model predictions, targets, and probabilities across training phases.  
 * 📁 **models/**: Stores the serialized .pt weights for all models generated during the repeated holdouts.
 
 **To run all experiments sequentially (Batch Mode):**  
@@ -76,6 +76,6 @@ bash exec\_files/experiment\_runner.bash
 ### **C. Analyze Results**
 
 You can compute the mean, standard deviation, and quantify catastrophic forgetting statistics for any completed experiment using the analysis utility:  
-python src/utils/analyze\_results.py results/EXP-RESULTS-FOLDER/metrics/predictions.h5
+python src/utils/analyze\_results.py results/EXP-RESULTS-FOLDER/metrics/predictions_i.h5
 
 *(Note: Ensure you point the script to the actual .h5 file generated in your results directory).*
