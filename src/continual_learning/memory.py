@@ -2,12 +2,12 @@
 """
     Class defined the memory buffer for replay-based learning.
 """
-import torch
-from torch.utils.data import DataLoader, Dataset
-import numpy as np
-from sklearn.manifold import TSNE
-
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from sklearn.manifold import TSNE
+from torch.utils.data import DataLoader, Dataset
+
 
 class MemoryBuffer:
     """
@@ -116,11 +116,21 @@ class MemoryBuffer:
                                     wa=0.1,
                                     alea_drop_fraction=0.15,
                                     mc_passes=10,
-                                    uniform_ratio=0.5
+                                    uniform_ratio=0.5,
+                                    by_class = False
                                 ):
         """
             Hybrid sampling: Retain X% uniformly, and the rest using advanced uncertainty curation 
             balancing Epistemic exploration, Entropy maximization, and Aleatoric noise mitigation.
+            
+            Parameters:
+            - we (float): weight for epistemic uncertainty
+            - wH (float): weight for predictive entropy (or total uncertainty)
+            - wa (float): weight for aleatoric uncertainty
+            - alea_drop_fraction (float): Fraction of samples to drop based on high aleatoric uncertainty, to avoid outliers
+            - mc_passes (int): Number of Monte Carlo forward passes for uncertainty estimation
+            - uniform_ratio (float): Ratio of samples to retain uniformly
+            - by_class (bool): If True, perform uncertainty-based selection per class to ensure class balance in the memory buffer.
         """
         #print(f"\n\n==========> Uncertainty-based memory update <==========\n\n")
         #====================================================================================================#
@@ -159,8 +169,8 @@ class MemoryBuffer:
                 aleatoric = entropies_per_pass.mean(dim=0) # (batch_size)
 
                 # Total Entropy (Entropy of the average predictive probability)
-                mean_probs = probs.mean(dim=0) 
-                total_entropy = -torch.sum(mean_probs * torch.log(mean_probs + 1e-10), dim=1) 
+                mean_probs = probs.mean(dim=0) # (batch_size, num_classes)
+                total_entropy = -torch.sum(mean_probs * torch.log(mean_probs + 1e-10), dim=1) # (batch_size)
                 
                 # Epistemic Uncertainty (Mutual Information = Total - Aleatoric)
                 epistemic = total_entropy - aleatoric
@@ -192,13 +202,13 @@ class MemoryBuffer:
         #====================================================================================================#
         # Compute Composite Curation Scores
         # NOTE: epistemic measures model ignorance, so this term ensures the memory buffer captures the diversity of the data manifold, pulling in rare edge cases and minority groups.
-        # NOTE: aleatoric measures data noice, so this term tries to reduce data noise in the memory.
+        # NOTE: aleatoric measures data noise, so this term tries to reduce data noise in the memory.
         # NOTE: the predictive entropy (similar or equivalent to total uncertainty) acts as the "Decision Boundary" anchor, as it measures the flatness of the output probabilities. This term is important as forgetting happens at the boundaries, entropy finds the boundaries to perform hard mining.
         scores = we * epistemic_norm + wH * entropy_norm - wa * aleatoric_norm
         
         #====================================================================================================#
         #====================================================================================================#
-        # Filter out highly noisy (high aleatoric) outliers using your percentile logic
+        # Determine number of samples to keep
         pool_size = len(all_x)
         target_capacity = min(self.capacity, pool_size)
         
@@ -208,25 +218,68 @@ class MemoryBuffer:
             self.buffer_y = all_y
             return
 
+        # If capacity is reached, sample based on a ratio of uniform and uncertainty-score sampling
+        if by_class:
+            final_selected_indices = []
+            available_classes = np.unique(np.array(all_y))
+            cum_class_target_capacity = 0
+            for i_c, c in enumerate(available_classes):
+                class_mask = (np.array(all_y) == c)
+                class_indices = np.where(class_mask)[0]
+                if i_c == len(available_classes) - 1:
+                    # Last class takes the remaining capacity
+                    class_target_capacity = target_capacity - cum_class_target_capacity
+                else:
+                    class_target_capacity = int(len(class_indices) / pool_size * target_capacity) # We need to pick class_ratio_in_pool * capacity samples
+                cum_class_target_capacity += class_target_capacity
+                print(f"Class {c}: Selecting {class_target_capacity} samples out of {len(class_indices)} available samples.")
+
+                class_selected_indices = self._get_uncertainty_based_indices(class_indices, scores, ua_mean, class_target_capacity, uniform_ratio, alea_drop_fraction)
+                final_selected_indices.extend(class_selected_indices)
+        else:
+            final_selected_indices = self._get_uncertainty_based_indices(np.arange(pool_size), scores, ua_mean, target_capacity, uniform_ratio, alea_drop_fraction)
+
+        # Commit chosen tensors back to storage
+        self.buffer_x = [all_x[i] for i in final_selected_indices]
+        self.buffer_y = [all_y[i] for i in final_selected_indices]
+
+    def _get_uncertainty_based_indices(self, candidate_indices, scores, ua_mean, candidate_target_capacity, uniform_ratio, alea_drop_fraction):
+        """Based on a list of indices and their corresponding uncertainty scores:
+        - drop the indices with the highest aleatoric uncertainty (to avoid noisy outliers)
+        - select a fraction of the remaining indices uniformly
+        - select the rest based on the highest uncertainty scores
+
+        Args:
+            candidate_indices (np.array): A list of indices of candidate samples
+            scores (np.array): An array of uncertainty scores for the candidate samples
+            ua_mean (np.array): An array of aleatoric uncertainties for the candidate samples
+            candidate_target_capacity (int): The target capacity for the selected samples
+            uniform_ratio (float): The ratio of uniformly selected samples
+            alea_drop_fraction (float): The fraction of noisy samples (in terms of aleatoric uncertainty) to drop
+
+        Returns:
+            np.array: A list of indices of the selected samples
+        """
         # Calculate exact counts for the split
-        num_uniform = int(target_capacity * uniform_ratio)
-        num_strategic = target_capacity - num_uniform
-        all_indices = np.arange(pool_size)
+        num_candidate = len(candidate_indices)
+        num_uniform = int(candidate_target_capacity * uniform_ratio)
+        num_strategic = candidate_target_capacity - num_uniform
 
         # Uniform Selection
-        uniform_indices = np.random.choice(all_indices, num_uniform, replace=False)
+        uniform_indices = np.random.choice(candidate_indices, num_uniform, replace=False)
 
         # Create mask to ONLY consider the remaining unpicked samples for strategy
-        remaining_mask = np.ones(pool_size, dtype=bool)
+        remaining_mask = np.ones(num_candidate, dtype=bool)
         remaining_mask[uniform_indices] = False
         
         # Filter out highly noisy (high aleatoric) outliers using percentile logic
-        max_droppable = pool_size - target_capacity
-        intended_drop = int(pool_size * alea_drop_fraction)
+        # NOTE the drop is done on all the candidates, whatever if they were uniformly chosen or not.
+        max_droppable = num_candidate - candidate_target_capacity
+        intended_drop = int(num_candidate * alea_drop_fraction)
         actual_drop = min(intended_drop, max_droppable)
         
         if (actual_drop > 0):
-            keep_percentage = 100.0 * (pool_size - actual_drop) / pool_size
+            keep_percentage = 100.0 * (num_candidate - actual_drop) / num_candidate
             aleatoric_cut = np.percentile(ua_mean, keep_percentage)
             candidate_mask = (ua_mean <= aleatoric_cut)
         else:
@@ -258,11 +311,7 @@ class MemoryBuffer:
         #====================================================================================================#
         #====================================================================================================#
         # Combine both selections
-        final_selected_indices = np.concatenate([uniform_indices, strategic_indices])
-
-        # Commit chosen tensors back to storage
-        self.buffer_x = [all_x[i] for i in final_selected_indices]
-        self.buffer_y = [all_y[i] for i in final_selected_indices]
+        return np.concatenate([uniform_indices, strategic_indices])
 
                 
     def update_feature_dissimilarity(self, new_x, new_y, model):
