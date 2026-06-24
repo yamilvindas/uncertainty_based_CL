@@ -23,4 +23,5 @@ Training:
   batch_size: 64
   n_repetitions: 10
 Optuna:
+  use_optuna: true
   n_trials: 30

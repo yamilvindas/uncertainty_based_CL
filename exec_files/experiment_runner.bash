@@ -48,7 +48,7 @@ for ds in "${DATASETS[@]}"; do
 import os, sys, yaml
 target_dir = sys.argv[1]
 # Desired order index for strategies
-strategies_order = {"uniform": 0, "loss": 1, "dissimilarity": 2, "uncertainty": 3}
+strategies_order = {"uniform": 0, "loss": 1, "dissimilarity": 2, "uncertainty": 3, "hybrid": 4}
 
 files = [f for f in os.listdir(target_dir) if f.endswith(".yaml") or f.endswith(".yml")]
 file_info = []
@@ -118,6 +118,7 @@ for config_file in "${QUEUE[@]}"; do
     # Extract metadata safely using a robust Python execution with single quotes
     metadata=$(python3 -c '
 import yaml, sys
+
 try:
     with open(sys.argv[1], "r") as f:
         cfg = yaml.safe_load(f)
@@ -133,6 +134,15 @@ try:
             mem_strategy = cl_cfg["Replay"].get("memory_strategy", "Uniform")
             mem_capacity = cl_cfg["Replay"].get("capacity", 0.1)
             exp_id += f"_MemStrategy-{mem_strategy}_MemCapacity-{mem_capacity}"
+
+
+            # Uniform combination (for loss and uncertainty approaches)
+            if (mem_strategy.lower() in ["uncertainty", "loss"]):
+                optimize_uniform_ratio = cl_cfg["Replay"].get("optimize_uniform_ratio", True)
+                exp_id += f"_OptUnifRatio-{optimize_uniform_ratio}"
+                uniform_ratio = cl_cfg["Replay"]["uniform_ratio"]
+                if (optimize_uniform_ratio):
+                    exp_id += f"_UnifRatio-{uniform_ratio}"
             
         # EWC tags
         if cl_cfg.get("EWC", {}).get("use_ewc", False):

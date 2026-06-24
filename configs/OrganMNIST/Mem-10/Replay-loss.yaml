@@ -7,6 +7,7 @@ ContinualLearning:
     memory_strategy: loss
     capacity: 0.1
     lambda_replay: 1.0
+    optimize_uniform_ratio: false
     uniform_ratio: 0.5
   EWC:
     use_ewc: false
@@ -24,4 +25,5 @@ Training:
   batch_size: 64
   n_repetitions: 10
 Optuna:
+  use_optuna: true
   n_trials: 30

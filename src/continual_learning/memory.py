@@ -32,6 +32,7 @@ class MemoryBuffer:
         """
             Uniform/Reservoir sampling
         """
+        #print(f"\n\n==========> Uniform memory update <==========\n\n")
         for i in range(len(new_x)):
             if len(self.buffer_x) < self.capacity:
                 self._add_to_buffer(new_x[i], new_y[i])
@@ -53,6 +54,7 @@ class MemoryBuffer:
         """
             Hybrid sampling: Retain X% uniformly, and the rest based on highest loss (hardest examples)
         """
+        #print(f"\n\n==========> Loss-based memory update <==========\n\n")
         model.eval()
         with torch.no_grad():
             outputs = model(new_x.to(self.device))
@@ -120,6 +122,7 @@ class MemoryBuffer:
             Hybrid sampling: Retain X% uniformly, and the rest using advanced uncertainty curation 
             balancing Epistemic exploration, Entropy maximization, and Aleatoric noise mitigation.
         """
+        #print(f"\n\n==========> Uncertainty-based memory update <==========\n\n")
         #====================================================================================================#
         #====================================================================================================#
         # Selectively turn on Dropout layers for the Monte Carlo passes
@@ -266,6 +269,7 @@ class MemoryBuffer:
         """
             Greedy K-Center on extracted features to maximize memory diversity
         """
+        #print(f"\n\n==========> Dissimilarity-based memory update <==========\n\n")
         model.eval()
         all_x = self.buffer_x + list(new_x.cpu())
         all_y = self.buffer_y + list(new_y.cpu())
@@ -289,6 +293,163 @@ class MemoryBuffer:
 
         self.buffer_x = [all_x[i] for i in selected_indices]
         self.buffer_y = [all_y[i] for i in selected_indices]
+
+    def update_hybrid_pool_kcenter(
+        self,
+        new_x,
+        new_y,
+        model,
+        criterion,
+        we=1.0,
+        wH=0.1,
+        wa=0.1,
+        wl=1.0,
+        alea_drop_fraction=0.15,
+        mc_passes=10,
+        uniform_ratio=0.5,
+        pool_multiplier=3
+    ):
+        """
+            Hybrid Idea 1: "Pool-Based K-Center".
+            Retains X% uniformly. From the remaining samples, creates a pool of the highest scorers 
+            (combining normalized loss and uncertainty). Finally, uses Greedy K-Center on the 
+            latent features of that pool to maximize geometric diversity while ensuring informativeness.
+        """
+        # Safe MC Dropout (freeze batch norm, enable dropout layers)
+        def enable_dropout(m):
+            if type(m) == torch.nn.Dropout or type(m) == torch.nn.Dropout2d:
+                m.train()
+        model.eval()
+        model.apply(enable_dropout)
+
+        all_x = self.buffer_x + list(new_x.cpu())
+        all_y = self.buffer_y + list(new_y.cpu())
+        pool_size = len(all_x)
+        target_capacity = min(self.capacity, pool_size)
+        
+        if (pool_size <= target_capacity):
+            self.buffer_x = all_x
+            self.buffer_y = all_y
+            return
+
+        # Batched computation of Uncertainties and Losses (to prevent GPU OOM)
+        inputs = torch.stack(all_x).to(self.device)
+        raw_epistemic, raw_aleatoric, raw_entropy = [], [], []
+        all_losses = []
+
+        with torch.no_grad():
+            for i in range(0, len(inputs), 32): 
+                batch_x = inputs[i:i+32]
+                batch_y = torch.stack(all_y[i:i+32]).to(self.device)
+
+                # ===> Loss Computation <===
+                outputs = model(batch_x)
+                # Ensure criterion outputs a per-sample loss (reduction='none' must be used)
+                losses = criterion(outputs, batch_y).cpu()
+                if losses.dim() == 0:
+                    raise ValueError("Criterion must have reduction='none' for hybrid sampling.")
+                all_losses.extend(losses.numpy())
+                
+                # ===> Uncertainty Computation <===
+                probs = torch.stack([model(batch_x).softmax(dim=1) for _ in range(mc_passes)])
+                
+                entropies_per_pass = -torch.sum(probs * torch.log(probs + 1e-10), dim=2)
+                aleatoric = entropies_per_pass.mean(dim=0)
+                
+                mean_probs = probs.mean(dim=0) 
+                total_entropy = -torch.sum(mean_probs * torch.log(mean_probs + 1e-10), dim=1) 
+                epistemic = total_entropy - aleatoric
+                
+                raw_epistemic.extend(epistemic.cpu().numpy())
+                raw_aleatoric.extend(aleatoric.cpu().numpy())
+                raw_entropy.extend(total_entropy.cpu().numpy())
+
+        # Arrays for Normalization
+        ua_mean = np.array(raw_aleatoric)
+        ue_mean = np.array(raw_epistemic)
+        h_mean = np.array(raw_entropy)
+        l_mean = np.array(all_losses)
+
+        # Min-Max Normalization Helper
+        def min_max_normalize(arr):
+            denominator = arr.max() - arr.min()
+            if denominator == 0:
+                return np.zeros_like(arr)
+            return (arr - arr.min()) / denominator
+
+        epistemic_norm = min_max_normalize(ue_mean)
+        aleatoric_norm = min_max_normalize(ua_mean)
+        entropy_norm = min_max_normalize(h_mean)
+        loss_norm = min_max_normalize(l_mean)
+        
+        # Composite Score: Information maximization with noise mitigation
+        scores = (we * epistemic_norm) + (wH * entropy_norm) + (wl * loss_norm) - (wa * aleatoric_norm)
+
+        # Uniform Split Partitioning
+        num_uniform = int(target_capacity * uniform_ratio)
+        num_strategic = target_capacity - num_uniform
+        all_indices = np.arange(pool_size)
+
+        uniform_indices = np.random.choice(all_indices, num_uniform, replace=False)
+        
+        remaining_mask = np.ones(pool_size, dtype=bool)
+        remaining_mask[uniform_indices] = False
+        
+        # Aleatoric Drop (Outlier Filtering)
+        max_droppable = pool_size - target_capacity
+        intended_drop = int(pool_size * alea_drop_fraction)
+        actual_drop = min(intended_drop, max_droppable)
+        
+        if (actual_drop > 0):
+            keep_percentage = 100.0 * (pool_size - actual_drop) / pool_size
+            aleatoric_cut = np.percentile(ua_mean, keep_percentage)
+            candidate_mask = (ua_mean <= aleatoric_cut)
+        else:
+            candidate_mask = np.ones_like(ua_mean, dtype=bool)
+            
+        if (not np.any(candidate_mask)):
+            candidate_mask = np.ones_like(ua_mean, dtype=bool)
+        
+        valid_strategic_mask = candidate_mask & remaining_mask
+        if not np.any(valid_strategic_mask):
+            valid_strategic_mask = remaining_mask
+
+        candidate_indices = np.where(valid_strategic_mask)[0]
+        candidate_scores = scores[valid_strategic_mask]
+
+        # Funnel into the Top Scoring Pool
+        pool_target = min(len(candidate_indices), num_strategic * pool_multiplier)
+        top_candidate_sort_idx = np.argsort(candidate_scores)[::-1][:pool_target]
+        pool_indices = candidate_indices[top_candidate_sort_idx]
+
+        # Geometric Diversity Check: Greedy K-Center on the selected pool
+        if (len(pool_indices) <= num_strategic):
+            # Skip K-center if the pool size is exactly what we need
+            strategic_indices = pool_indices
+        else:
+            with torch.no_grad():
+                pool_inputs = torch.stack([all_x[i] for i in pool_indices]).to(self.device)
+                # Restore clean eval state before feature extraction
+                model.eval() 
+                pool_features = model.extract_features(pool_inputs).cpu()
+
+            selected_pool_idx = [np.random.randint(0, len(pool_features))]
+            min_distances = torch.norm(pool_features - pool_features[selected_pool_idx[0]], dim=1)
+
+            # Iteratively pick the most geometrically distinct points from the high-scoring pool
+            while len(selected_pool_idx) < num_strategic:
+                farthest = torch.argmax(min_distances).item()
+                selected_pool_idx.append(farthest)
+                dist_to_new = torch.norm(pool_features - pool_features[farthest], dim=1)
+                min_distances = torch.min(min_distances, dist_to_new)
+
+            strategic_indices = [pool_indices[i] for i in selected_pool_idx]
+
+        # Combine uniform and strategically-dissimilar arrays
+        final_selected_indices = np.concatenate([uniform_indices, strategic_indices])
+
+        self.buffer_x = [all_x[i] for i in final_selected_indices]
+        self.buffer_y = [all_y[i] for i in final_selected_indices]
 
 
 class TensorDataset(Dataset):

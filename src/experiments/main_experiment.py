@@ -6,6 +6,7 @@
 import os
 import sys
 import yaml
+import copy
 import argparse
 from copy import deepcopy
 import h5py
@@ -46,11 +47,20 @@ class CLTrainer:
             mem_strategy = self.config['ContinualLearning']['Replay'].get('memory_strategy', 'Uniform')
             mem_capacity = self.config['ContinualLearning']['Replay']['capacity']
             self.exp_id += f"_MemStrategy-{mem_strategy}_MemCapacity-{mem_capacity}"
+            
+            # Uniform combination (for loss and uncertainty approaches)
+            if (mem_strategy.lower() in ['uncertainty', 'loss', 'hybrid']):
+                optimize_uniform_ratio = self.config['ContinualLearning']['Replay'].get('optimize_uniform_ratio', True)
+                self.exp_id += f"_OptUnifRatio-{optimize_uniform_ratio}"
+                uniform_ratio = self.config['ContinualLearning']['Replay']['uniform_ratio']
+                if (optimize_uniform_ratio):
+                    self.exp_id += f"_UnifRatio-{uniform_ratio}"
         # EWC
         if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)):
             self.exp_id += "_EWC-True"
         else:
             self.exp_id += "_EWC-False"
+        
         
         # Setup Directories & Files
         self.base_results_dir = Path(self.config['results_dir'])
@@ -199,21 +209,34 @@ class CLTrainer:
 
             # For uncertainty-based sample selection
             # NOTE: we update the parameters of the memory selection strategie only if we are not in the first tast (memory is updated with the data loader of the previous task, so if we are in task B, we are going to use the data loader of task A)
-            if (self.memory_strategy.lower() == 'uncertainty') and (self.current_task.lower() != "task_a"):
+            if (self.memory_strategy.lower() in ['uncertainty', 'hybrid']) and (self.current_task.lower() != "task_a"):
                 # Suggest continuous weights between 0.0 and 2.0
                 we = trial.suggest_float("we", 0.0, 2.0)
                 wH = trial.suggest_float("wH", 0.0, 2.0)
                 wa = trial.suggest_float("wa", 0.0, 2.0)
-                alea_drop_fraction = trial.suggest_float("alea_drop_fraction", 0.0, 1.0)
+                #alea_drop_fraction = trial.suggest_float("alea_drop_fraction", 0.0, 1.0)
+                alea_drop_fraction = trial.suggest_float("alea_drop_fraction", 0.0, 0.5)
                 
                 # Temporarily inject suggested params into the configuration state
                 self.config['ContinualLearning']['Replay']['we'] = we
                 self.config['ContinualLearning']['Replay']['wH'] = wH
                 self.config['ContinualLearning']['Replay']['wa'] = wa
                 self.config['ContinualLearning']['Replay']['alea_drop_fraction'] = alea_drop_fraction
-            if (self.memory_strategy.lower() in ['uncertainty', 'loss']) and (self.current_task.lower() != "task_a"):
-                uniform_ratio = trial.suggest_float("alea_drop_fraction", 0.0, 1.0)
-                self.config['ContinualLearning']['Replay']['uniform_ratio'] = uniform_ratio
+
+                # Hybrid approach
+                if (self.memory_strategy.lower() == 'hybrid'):
+                    # Suggest values
+                    wl = trial.suggest_float("wl", 0.0, 2.0)
+                    pool_multiplier = trial.suggest_int("pool_multiplier", 2, 8)
+
+                    # Temporarily inject suggested params into the configuration state
+                    self.config['ContinualLearning']['Replay']['wl'] = wl
+                    self.config['ContinualLearning']['Replay']['pool_multiplier'] = pool_multiplier
+                
+            if (self.memory_strategy.lower() in ['uncertainty', 'loss', 'hybrid']) and (self.current_task.lower() != "task_a"):
+                if (self.config['ContinualLearning']['Replay'].get('optimize_uniform_ratio', True)):
+                    uniform_ratio = trial.suggest_float("uniform_ratio", 0.0, 1.0)
+                    self.config['ContinualLearning']['Replay']['uniform_ratio'] = uniform_ratio
 
                 
             # Temporarily inject suggested params into the configuration state
@@ -232,9 +255,9 @@ class CLTrainer:
 
                 # Re-initialize EWC for the Optuna trial
                 if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)):
-                    previous_class_weights = self.compute_class_weights(self.previous_task_data_loader)
+                    previous_class_weights = self.compute_class_weights(self.previous_task_data_loader['Train'])
                     previous_criterion = nn.CrossEntropyLoss(weight=previous_class_weights.to(self.device), reduction='none')
-                    self.ewc = EWC(self.model, self.previous_task_data_loader, self.device, previous_criterion)
+                    self.ewc = EWC(self.model, self.previous_task_data_loader['Train'], self.device, previous_criterion)
 
             # Run train WITHOUT saving files to disk
             # Data loaders
@@ -243,6 +266,13 @@ class CLTrainer:
                                 f'Val_{self.current_task}': val_loader,
                                 f'Test_{self.current_task}': test_loader,
                             }
+            if (self.previous_task_data_loader is not None):
+                eval_loaders.update(
+                                        {
+                                            f'Val_{self.previous_task}': self.previous_task_data_loader['Val'],
+                                            f'Test_{self.previous_task}': self.previous_task_data_loader['Test'],
+                                        }
+                                    )
             # Class weights
             class_weights = self.compute_class_weights(train_loader)
             # Init
@@ -252,11 +282,18 @@ class CLTrainer:
             # Get final results after training on both tasks
             final_results = self.evaluate_and_save_phase(f"Phase_Post_{self.current_task}", eval_loaders, rep=0, save_results=False)
             val_metric_current_task = final_results[f'Val_{self.current_task}']
+            if (self.current_task.lower() != 'task_a'): 
+                # NOTE: in this case, to avoid "cheating" for task B and high forgetting for task A, we will optimize the metrics of both tasks
+                val_metric_previous_task = final_results[f'Val_{self.previous_task}']
+                val_metric = (val_metric_current_task + val_metric_previous_task) / 2
+            else:
+                val_metric = val_metric_current_task
             # Save best model (it can be used for optimization of other tasks)
             self.save_model(self.current_task, rep=trial.number, optuna=True)
+
             
             # We want to maximize the current task metric
-            return val_metric_current_task
+            return val_metric
         
 
         is_continual = (self.config['ContinualLearning']['Replay'].get('use_replay', False)) or (self.config['ContinualLearning']['EWC'].get('use_ewc', False))
@@ -351,14 +388,21 @@ class CLTrainer:
         if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)) and (self.current_task.lower() != 'task_a'):
             self.config['ContinualLearning']['EWC']['lambda_ewc'] = best_params['lambda_ewc']
 
-        if (self.memory_strategy.lower() == 'uncertainty') and (task.lower() != "task_a"):
+        if (self.memory_strategy.lower() in ['uncertainty', 'hybrid']) and (task.lower() != "task_a"):
                 # Temporarily inject suggested params into the configuration state
                 self.config['ContinualLearning']['Replay']['we'] = best_params['we']
                 self.config['ContinualLearning']['Replay']['wH'] = best_params['wH']
                 self.config['ContinualLearning']['Replay']['wa'] = best_params['wa']
                 self.config['ContinualLearning']['Replay']['alea_drop_fraction'] = best_params['alea_drop_fraction']
-        if (self.memory_strategy.lower() in ['uncertainty', 'loss']) and (self.current_task.lower() != "task_a"):
-            self.config['ContinualLearning']['Replay']['uniform_ratio'] = best_params['uniform_ratio']
+
+                if (self.memory_strategy.lower() == 'hybrid'):
+                    # Temporarily inject suggested params into the configuration state
+                    self.config['ContinualLearning']['Replay']['wl'] = best_params['wl']
+                    self.config['ContinualLearning']['Replay']['pool_multiplier'] = best_params['pool_multiplier']
+
+        if (self.memory_strategy.lower() in ['uncertainty', 'loss', 'hybrid']) and (self.current_task.lower() != "task_a"):
+            if (self.config['ContinualLearning']['Replay'].get('optimize_uniform_ratio', True)):
+                self.config['ContinualLearning']['Replay']['uniform_ratio'] = best_params['uniform_ratio']
 
     def _save_to_h5(self, group_path, preds, targets, probs=None):
         """
@@ -446,8 +490,9 @@ class CLTrainer:
     
 
     def update_memory(self, dataloader):
+        print(f"\n\n==========> UPDATING MEMORY <==========\n\n")
         if (self.memory is not None):
-            for batch in dataloader:
+            for batch in tqdm(dataloader):
                 # Get batch data
                 if (self.config['Dataset'].get('dataset_type', 'OrganMNIST') == "Camelyon17"):
                     x, y, metadata = batch
@@ -477,8 +522,25 @@ class CLTrainer:
                                                                 mc_passes=self.config['ContinualLearning']['Replay']['mc_passes'],
                                                                 uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5)
                                                             )
+
                     elif (self.memory_strategy.lower() == 'dissimilarity'):
                         self.memory.update_feature_dissimilarity(x, y, self.model)
+                    elif (self.memory_strategy.lower() == 'hybrid'):
+                        self.memory.update_hybrid_pool_kcenter(
+                                                                    new_x=x,
+                                                                    new_y=y,
+                                                                    model=self.model,
+                                                                    criterion=self.criterion,
+                                                                    we=self.config['ContinualLearning']['Replay']['we'],
+                                                                    wH=self.config['ContinualLearning']['Replay']['wH'],
+                                                                    wa=self.config['ContinualLearning']['Replay']['wa'],
+                                                                    wl=self.config['ContinualLearning']['Replay']['wl'],
+                                                                    alea_drop_fraction=self.config['ContinualLearning']['Replay']['alea_drop_fraction'],
+                                                                    mc_passes=self.config['ContinualLearning']['Replay']['mc_passes'],
+                                                                    uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5),
+                                                                    pool_multiplier=self.config['ContinualLearning']['Replay'].get('pool_multiplier', 3)
+                                                                )
+
 
         # Raise error if memory not full and data loader number of samples > capacitY
         n_samples_in_memory = len(self.memory.buffer_x)
@@ -489,7 +551,7 @@ class CLTrainer:
     def train_single_task(self, task_name, train_loader, eval_loaders_dict, rep, save_results=True):
         # Update memory if necessary
         if (self.config['ContinualLearning']['Replay'].get('use_replay', False)) and (self.previous_task_data_loader is not None):
-                self.update_memory(dataloader=self.previous_task_data_loader)
+            self.update_memory(dataloader=self.previous_task_data_loader['Train'])
 
         # Activate train mode
         self.model.train()
@@ -676,7 +738,11 @@ class CLTrainer:
             # Init
             self.initialize_task(class_weights)
             # Train
-            self.previous_task_data_loader = self.loader_A
+            self.previous_task_data_loader = {
+                                                'Train': self.loader_A,
+                                                'Val': val_A_loader,
+                                                'Test': test_A_loader,
+                                             }
             self.train_single_task(self.current_task, self.loader_B, eval_loaders, rep, save_results)
             # Save model
             if (save_results):
@@ -803,12 +869,28 @@ def main():
     trainer = CLTrainer(config=config)
 
     #====================================================================================================#
+    # DIRECTORY SETUP & INITIAL CONFIGURATION SAVE
+    # Resolves to results/EXP_ID/configs/ grouping the config files with the experiment results
+    configs_save_dir = Path(trainer.metrics_dir).parent / "configs"
+    configs_save_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create an isolated deepcopy of the configuration before Optuna suggestions run
+    initial_config = copy.deepcopy(trainer.config)
+    initial_config_path = configs_save_dir / "initial_config.yaml"
+    with open(initial_config_path, 'w') as f:
+        yaml.safe_dump(initial_config, f, default_flow_style=False, sort_keys=False)
+    print(f"[INFO] Saved initial configuration checkpoint to: {initial_config_path}")
+
+
+    #====================================================================================================#
     # Run Hyperparameter Optimization 
     tasks = ['Task_A', 'Task_B']
     data_tasks = [task_a_data, task_b_data]
-    loader_A, _, _ = trainer.get_data_loaders(task_a_data)
-    loader_B, _, _ = trainer.get_data_loaders(task_b_data)
+    loader_A, val_loader_A, test_loader_A = trainer.get_data_loaders(task_a_data)
+    loader_B, val_loader_B, test_loader_B = trainer.get_data_loaders(task_b_data)
     train_loaders = [loader_A, loader_B]
+    val_loaders = [val_loader_A, val_loader_B]
+    test_loaders = [test_loader_A, test_loader_B]
     for i_task in range(len(tasks)):
         print(f"\n\n==========> Hyper-parameter optimization of task {tasks[i_task]} <==========\n\n")
         # Notice we pass the data. Optuna will test configurations and 
@@ -816,7 +898,11 @@ def main():
         current_task = tasks[i_task]
         trainer.current_task = current_task
         if (current_task.lower() != "task_a"): # We are not in the first task, so a previous data loader exists
-            trainer.previous_task_data_loader = train_loaders[i_task-1]
+            trainer.previous_task_data_loader = {
+                                                    'Train': train_loaders[i_task-1],
+                                                    'Val': val_loaders[i_task-1],
+                                                    'Test': test_loaders[i_task-1]
+                                                }
             trainer.previous_task = tasks[i_task-1]
         else:
             trainer.previous_task_data_loader = None
@@ -832,6 +918,14 @@ def main():
     # and a fresh model state.
     print("\n\n==========> Starting final full run with optimal configuration <==========\n")
     trainer.repeated_holdout(task_a_data, task_b_data, ext_test_data, save_results=True, n_repetitions=config['Training'].get('n_repetitions', 5))
+
+    #====================================================================================================#
+    # SAVE FINAL CONFIGURATION
+    # The trainer config now contains all optimized hyper-parameters from the Optuna phase
+    final_config_path = configs_save_dir / "final_config.yaml"
+    with open(final_config_path, 'w') as f:
+        yaml.safe_dump(trainer.config, f, default_flow_style=False, sort_keys=False)
+    print(f"[INFO] Saved final optimized configuration checkpoint to: {final_config_path}")
 
 
 if __name__ == "__main__":
