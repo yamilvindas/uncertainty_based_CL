@@ -45,6 +45,7 @@ def build_base_config(dataset_name, hits_data_paths=None):
                                 },
 
                     "Optuna": {
+                                "use_optuna": True,
                                 "n_trials": 30
                             }
                 }
@@ -86,6 +87,7 @@ def build_base_config(dataset_name, hits_data_paths=None):
                                 },
 
                     "Optuna": {
+                                    "use_optuna": True,
                                     "n_trials": 30
                                 }
                 }
@@ -130,6 +132,7 @@ def build_base_config(dataset_name, hits_data_paths=None):
                                 },
 
                     "Optuna": {
+                                    "use_optuna": True,
                                     "n_trials": 30
                                 }
                 }
@@ -146,7 +149,7 @@ def write_yaml(filepath, data):
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
     print(f"Generated: {filepath}")
 
-def generate_all_configs(generate_EWC_Replay_combination=True, hits_data_path_A='', hits_data_path_B=''):
+def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_unif_ratio=True, hits_data_path_A='', hits_data_path_B=''):
     # Base directories
     base_dir = "configs"
 
@@ -198,7 +201,7 @@ def generate_all_configs(generate_EWC_Replay_combination=True, hits_data_path_A=
                 # In this case we keep ALL the samples so all sample selection methods are the same
                 mem_select_strategies = ['uniform']
             else:
-                mem_select_strategies = ['uniform', 'uncertainty', 'loss', 'dissimilarity']
+                mem_select_strategies = ['uniform', 'uncertainty', 'loss', 'dissimilarity', 'hybrid']
             for mem_strategy in mem_select_strategies:
                 # ===> Replay Only <===
                 replay_only = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B] if dataset == "HITS" else None)
@@ -209,16 +212,28 @@ def generate_all_configs(generate_EWC_Replay_combination=True, hits_data_path_A=
                 replay_only["ContinualLearning"]["Replay"]["lambda_replay"] = 1.0
                 replay_only["ContinualLearning"]["EWC"]["use_ewc"] = False
                 replay_only["ContinualLearning"]["EWC"]["lambda_ewc"] = 0.0
-                if (mem_strategy.lower() == 'uncertainty'):
+                if (mem_strategy.lower() in ['uncertainty', 'hybrid']):
                     replay_only['ContinualLearning']['Replay']['we'] = 1.0
                     replay_only['ContinualLearning']['Replay']['wH'] = 1.0
                     replay_only['ContinualLearning']['Replay']['wa'] = 1.0
                     replay_only['ContinualLearning']['Replay']['alea_drop_fraction'] = 0.15
-                    replay_only['ContinualLearning']['Replay']['mc_passes'] = 10
-                if (mem_strategy.lower() in ['uncertainty', 'loss']):
+                    #replay_only['ContinualLearning']['Replay']['mc_passes'] = 10
+                    replay_only['ContinualLearning']['Replay']['mc_passes'] = 20
+                    if (mem_strategy.lower() == 'hybrid'):
+                        replay_only['ContinualLearning']['Replay']['wl'] = 1.0
+                        replay_only['ContinualLearning']['Replay']['pool_multiplier'] = 3
+                if (mem_strategy.lower() in ['uncertainty', 'loss', 'hybrid']):
+                    replay_only['ContinualLearning']['Replay']['optimize_uniform_ratio'] = False
                     replay_only['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
-                
+                    if (mem_strategy.lower() in ['uncertainty', 'hybrid']):
+                        #replay_only['Optuna']['n_trials'] = 75
+                        replay_only['Optuna']['n_trials'] = 30
                 write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}.yaml"), replay_only)
+                # Save supplementary yaml file for loss and uncertainty approaches with fixed uniform ratio
+                if (mem_strategy.lower() in ['uncertainty', 'loss', 'hybrid']) and (generate_optuna_unif_ratio):
+                    replay_only['ContinualLearning']['Replay']['optimize_uniform_ratio'] = True
+                    replay_only['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
+                    write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}_OptunaUnifRatio.yaml"), replay_only)
                 
                 # ===> Replay with EWC <===
                 if (generate_EWC_Replay_combination):
@@ -230,15 +245,29 @@ def generate_all_configs(generate_EWC_Replay_combination=True, hits_data_path_A=
                     replay_ewc["ContinualLearning"]["Replay"]["memory_strategy"] = mem_strategy
                     replay_ewc["ContinualLearning"]["EWC"]["use_ewc"] = True
                     replay_ewc["ContinualLearning"]["EWC"]["lambda_ewc"] = 1.0e3
-                    if (mem_strategy.lower() == 'uncertainty'):
+                    if (mem_strategy.lower() in ['uncertainty', 'hybrid']):
                         replay_ewc['ContinualLearning']['Replay']['we'] = 1.0
                         replay_ewc['ContinualLearning']['Replay']['wH'] = 1.0
                         replay_ewc['ContinualLearning']['Replay']['wa'] = 1.0
                         replay_ewc['ContinualLearning']['Replay']['alea_drop_fraction'] = 0.15
-                        replay_ewc['ContinualLearning']['Replay']['mc_passes'] = 10
-                    if (mem_strategy.lower() in ['uncertainty', 'loss']):
+                        #replay_ewc['ContinualLearning']['Replay']['mc_passes'] = 10
+                        replay_ewc['ContinualLearning']['Replay']['mc_passes'] = 20
+                        if (mem_strategy.lower() == 'hybrid'):
+                            replay_ewc['ContinualLearning']['Replay']['wl'] = 1.0
+                            replay_ewc['ContinualLearning']['Replay']['pool_multiplier'] = 3
+                    if (mem_strategy.lower() in ['uncertainty', 'loss', 'hybrid']):
+                        replay_ewc['ContinualLearning']['Replay']['optimize_uniform_ratio'] = False
                         replay_ewc['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
+                        if (mem_strategy.lower() in ['uncertainty', 'hybrid']):
+                            #replay_ewc['Optuna']['n_trials'] = 75
+                            replay_ewc['Optuna']['n_trials'] = 30
+                        
                     write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}_EWC.yaml"), replay_ewc)
+                    # Save supplementary yaml file for loss and uncertainty approaches with fixed uniform ratio
+                    if (mem_strategy.lower() in ['uncertainty', 'loss', 'hybrid']) and (generate_optuna_unif_ratio):
+                        replay_ewc['ContinualLearning']['Replay']['optimize_uniform_ratio'] = True
+                        replay_ewc['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
+                        write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}_OptunaUnifRatio_EWC.yaml"), replay_ewc)
 
 if __name__ == "__main__":
     #====================================================================================================#
@@ -250,15 +279,22 @@ if __name__ == "__main__":
     ap.add_argument('--HITS-data-path-A', default='', help="Path to the HITS dataset (default: empty string)")
     ap.add_argument('--HITS-data-path-B', default='', help="Path to the second HITS dataset (default: empty string)")
     ap.add_argument('--generate_EWC_Replay_combination', help="Use if also want to generate the YAML files for the experiments combining EWC and Replay-based CL", action='store_true')
+    ap.add_argument('--generate_optuna_unif_ratio', help="Use if also want to generate the YAML files for fixed uniform ratios (for loss and uncertainty-based experiments)", action='store_true')
     args = vars(ap.parse_args())
 
     # Getting the value of the arguments
     hits_data_path_A = args['HITS_data_path_A']
     hits_data_path_B = args['HITS_data_path_B']
     generate_EWC_Replay_combination = args['generate_EWC_Replay_combination']
+    generate_optuna_unif_ratio = args['generate_optuna_unif_ratio']
 
     #====================================================================================================#
     #========================================== Generate Files ==========================================#
     #====================================================================================================#
-    generate_all_configs(generate_EWC_Replay_combination=generate_EWC_Replay_combination, hits_data_path_A=hits_data_path_A, hits_data_path_B=hits_data_path_B)
+    generate_all_configs(
+                            generate_EWC_Replay_combination=generate_EWC_Replay_combination,
+                            generate_optuna_unif_ratio=generate_optuna_unif_ratio,
+                            hits_data_path_A=hits_data_path_A,
+                            hits_data_path_B=hits_data_path_B
+                        )
     print("\n\n=======> All configuration folders and files have been successfully generated! <=======\n\n")
