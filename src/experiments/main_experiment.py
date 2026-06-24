@@ -26,10 +26,12 @@ from tqdm import tqdm
 sys.path.append(os.path.abspath(os.path.join("..")))
 from src.data_processing.OrganMNIST import OrganMNISTHandler
 from src.data_processing.Camelyon17 import CamelyonHandler
+from src.data_processing.HITS import HITSHandler
 from src.continual_learning.memory import MemoryBuffer, LatentVisualizer
 from src.continual_learning.ewc import EWC
 from src.models.resnet import ResNet18CLModel
 from src.models.simple_cnn import SimpleCLModel
+from src.models.timefreq2dcnn import TimeFreq2DCNNModel
 
 class CLTrainer:
     def __init__(self, config):
@@ -104,6 +106,12 @@ class CLTrainer:
                                             num_classes=self.config['Dataset']['num_classes'], 
                                             dropout_rate=self.config.get('dropout_rate', 0.5)
                                         ).to(self.device)
+
+        elif (model_type.lower() == 'timefreq2dcnn'):
+            self.model = TimeFreq2DCNNModel(
+                                                num_classes=self.config['Dataset']['num_classes'],
+                                                dropout_rate=self.config.get('dropout_rate', 0.2)
+                                            ).to(self.device)
 
         else:
             raise ValueError(f"Model type {model_type} is not valid.")
@@ -358,7 +366,7 @@ class CLTrainer:
                 self.config['ContinualLearning']['Replay']['wa'] = best_params['wa']
                 self.config['ContinualLearning']['Replay']['alea_drop_fraction'] = best_params['alea_drop_fraction']
         if (self.memory_strategy.lower() in ['uncertainty', 'loss']) and (self.current_task.lower() != "task_a"):
-            self.config['ContinualLearning']['Replay']['uniform_ratio'] = best_params['uniform_ratio']
+            self.config['ContinualLearning']['Replay']['uniform_ratio'] = best_params["uniform_ratio"]
 
     def _save_to_h5(self, group_path, preds, targets, probs=None):
         """
@@ -786,9 +794,20 @@ def main():
         data_handler = OrganMNISTHandler(batch_size, lite=config['Dataset']['Lite'])
         task_a_data, task_b_data = data_handler.get_tasks()
         ext_test_data = None
+
     elif (dataset_type.lower() == "camelyon17"):
         data_handler = CamelyonHandler(batch_size=batch_size, lite=config['Dataset']['Lite'])
         task_a_data, task_b_data, ext_test_data = data_handler.get_tasks()
+
+    elif (dataset_type.lower() == "hits"):
+        data_handler = HITSHandler(
+                                        batch_size=batch_size,
+                                        hdf5_a=config['Dataset']['task_a_hdf5'],
+                                        hdf5_b=config['Dataset']['task_b_hdf5']
+                                    )
+        task_a_data, task_b_data = data_handler.get_tasks()
+        ext_test_data = None
+
     else:
         raise ValueError(f"Dataset type {dataset_type} not valid.")
     
