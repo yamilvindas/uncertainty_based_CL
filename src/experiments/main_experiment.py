@@ -3,36 +3,38 @@
     Main experiment to train and validate Continual Learning
     experiments for healthcare
 """
-import os
-import sys
-import yaml
-import copy
 import argparse
-from copy import deepcopy
-import h5py
+import copy
+import os
 import random
+import sys
+from copy import deepcopy
+from pathlib import Path
+
+import h5py
+import numpy as np
+import optuna
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-import numpy as np
-from pathlib import Path
+import yaml
+from optuna.trial import TrialState
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.utils.class_weight import compute_class_weight
-import optuna
-from optuna.trial import TrialState
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 # For internal imports
 sys.path.append(os.path.abspath(os.path.join("..")))
-from src.data_processing.OrganMNIST import OrganMNISTHandler
+from src.continual_learning.ewc import EWC
+from src.continual_learning.memory import LatentVisualizer, MemoryBuffer
 from src.data_processing.Camelyon17 import CamelyonHandler
 from src.data_processing.HITS import HITSHandler
-from src.continual_learning.memory import MemoryBuffer, LatentVisualizer
-from src.continual_learning.ewc import EWC
+from src.data_processing.OrganMNIST import OrganMNISTHandler
 from src.models.resnet import ResNet18CLModel
 from src.models.simple_cnn import SimpleCLModel
 from src.models.timefreq2dcnn import TimeFreq2DCNNModel
+
 
 class CLTrainer:
     def __init__(self, config):
@@ -57,6 +59,9 @@ class CLTrainer:
                 uniform_ratio = self.config['ContinualLearning']['Replay']['uniform_ratio']
                 if (optimize_uniform_ratio):
                     self.exp_id += f"_UnifRatio-{uniform_ratio}"
+                by_class = self.config['ContinualLearning']['Replay'].get('by_class', False)
+                if by_class:
+                    self.exp_id += f"_ByClass-{by_class}"
         # EWC
         if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)):
             self.exp_id += "_EWC-True"
@@ -344,7 +349,7 @@ class CLTrainer:
             best_trial_number = other_study.best_trial.number
             # We load the best model from the previous task from the Baseline
             model_path = self.base_results_dir / f"{dataset_type}_NoMemory_EWC-False" / "models" / f"model_{self.current_task}_rep-{best_trial_number}_optuna.pt"
-            # TODO: IMPORTANT TO VERIFY IF THIS MAKE SENS FOR MORE THAN TWO TASKS
+            # TODO: IMPORTANT TO VERIFY IF THIS MAKE SENSE FOR MORE THAN TWO TASKS
         else: # We are doing optimization in the baseline model
             # Best trial
             best_trial_number = study.best_trial.number
@@ -882,7 +887,7 @@ def main():
     # Define number of possible samples in the memory 
     mem_capacity_samples = int(config['ContinualLearning']['Replay']['capacity']*data_handler.n_all_train_samples)
     config['ContinualLearning']['Replay']['capacity_in_n_samples'] = mem_capacity_samples
-    print(f"\n\n==========> Memory capacity in number of samples: {mem_capacity_samples} (~{config['ContinualLearning']['Replay']['capacity']})")
+    print(f"\n\n==========> Memory capacity in number of samples: {mem_capacity_samples} (~{config['ContinualLearning']['Replay']['capacity']}), check: {mem_capacity_samples / data_handler.n_all_train_samples:.4f} <==========\n\n")
 
     #====================================================================================================#
     # Initialize Trainer (Model is created internally based on YAML)
