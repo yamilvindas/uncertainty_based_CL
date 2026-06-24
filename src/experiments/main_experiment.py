@@ -528,7 +528,8 @@ class CLTrainer:
                                                                 wa=self.config['ContinualLearning']['Replay']['wa'],
                                                                 alea_drop_fraction=self.config['ContinualLearning']['Replay']['alea_drop_fraction'],
                                                                 mc_passes=self.config['ContinualLearning']['Replay']['mc_passes'],
-                                                                uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5)
+                                                                uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5),
+                                                                by_class=self.config['ContinualLearning']['Replay'].get('by_class', False)
                                                             )
 
                     elif (self.memory_strategy.lower() == 'dissimilarity'):

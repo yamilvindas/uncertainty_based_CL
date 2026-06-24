@@ -230,15 +230,15 @@ class MemoryBuffer:
                     # Last class takes the remaining capacity
                     class_target_capacity = target_capacity - cum_class_target_capacity
                 else:
-                    class_target_capacity = int(len(class_indices) / pool_size * target_capacity) # We need to pick class_ratio_in_pool * capacity samples
-                cum_class_target_capacity += class_target_capacity
-                print(f"Class {c}: Selecting {class_target_capacity} samples out of {len(class_indices)} available samples.")
+                    class_target_capacity = round(len(class_indices) / pool_size * target_capacity) # We need to pick class_ratio_in_pool * capacity samples
 
-                class_selected_indices = self._get_uncertainty_based_indices(class_indices, scores, ua_mean, class_target_capacity, uniform_ratio, alea_drop_fraction)
+                class_selected_indices = self._get_uncertainty_based_indices(class_indices, scores[class_indices], ua_mean[class_indices], class_target_capacity, uniform_ratio, alea_drop_fraction)
                 final_selected_indices.extend(class_selected_indices)
+                
+                cum_class_target_capacity += len(class_selected_indices) # Keep the real count of selected samples, if class_target_capacity was not attainable
+                
         else:
             final_selected_indices = self._get_uncertainty_based_indices(np.arange(pool_size), scores, ua_mean, target_capacity, uniform_ratio, alea_drop_fraction)
-
         # Commit chosen tensors back to storage
         self.buffer_x = [all_x[i] for i in final_selected_indices]
         self.buffer_y = [all_y[i] for i in final_selected_indices]
@@ -264,13 +264,19 @@ class MemoryBuffer:
         num_candidate = len(candidate_indices)
         num_uniform = int(candidate_target_capacity * uniform_ratio)
         num_strategic = candidate_target_capacity - num_uniform
-
+        
+        # Second check that number of candidates is sufficient to meet the target capacity, else select all samples
+        if (num_candidate <= candidate_target_capacity):
+            return candidate_indices
+        
         # Uniform Selection
-        uniform_indices = np.random.choice(candidate_indices, num_uniform, replace=False)
+        # uniform_indices = np.random.choice(candidate_indices, num_uniform, replace=False)
+        uniform_idx = np.random.randint(0, num_candidate, size=num_uniform, dtype=int)
+        uniform_sample_indices = candidate_indices[uniform_idx]
 
         # Create mask to ONLY consider the remaining unpicked samples for strategy
         remaining_mask = np.ones(num_candidate, dtype=bool)
-        remaining_mask[uniform_indices] = False
+        remaining_mask[uniform_idx] = False
         
         # Filter out highly noisy (high aleatoric) outliers using percentile logic
         # NOTE the drop is done on all the candidates, whatever if they were uniformly chosen or not.
@@ -298,20 +304,19 @@ class MemoryBuffer:
         #====================================================================================================#
         #====================================================================================================#
         # Get candidate indices and scores
-        candidate_indices = np.where(valid_strategic_mask)[0]
         candidate_scores = scores[valid_strategic_mask]
 
         #====================================================================================================#
         #====================================================================================================#
         # Extract top performing candidates up to remaining strategic capacity
         top_candidate_sort_idx = np.argsort(candidate_scores)[::-1][:num_strategic]
-        strategic_indices = candidate_indices[top_candidate_sort_idx]
+        strategic_sample_indices = candidate_indices[top_candidate_sort_idx]
 
         
         #====================================================================================================#
         #====================================================================================================#
         # Combine both selections
-        return np.concatenate([uniform_indices, strategic_indices])
+        return np.concatenate([uniform_sample_indices, strategic_sample_indices])
 
                 
     def update_feature_dissimilarity(self, new_x, new_y, model):
