@@ -26,14 +26,14 @@ echo "=========================================================="
 echo "    Continual Learning Ordered Runner (With Resume)       "
 echo "=========================================================="
 echo "Enforcing execution order:"
-echo " 1. Datasets: OrganMNIST -> Camelyon17"
+echo " 1. Datasets: OrganMNIST -> Camelyon17 -> HITS"
 echo " 2. Approaches: Baseline -> Mem-1 -> ... -> Mem-100"
 echo " 3. Memory Strategies: uniform -> loss -> dissimilarity -> uncertainty"
 echo " 4. Modifiers: No EWC (NoMemory/Standard Replay) -> With EWC"
 echo "----------------------------------------------------------"
 
 # Define the precise datasets and folder sequence to build the queue
-DATASETS=("OrganMNIST" "Camelyon17")
+DATASETS=("OrganMNIST" "Camelyon17" "HITS")
 SEQUENCE=("Baseline" "Mem-1" "Mem-5" "Mem-10" "Mem-50" "Mem-100")
 
 # 1. Build the ordered queue of configuration files

@@ -3,3 +3,5 @@
 completed_runs.log
 data/
 results/
+logs/
+pbs/
