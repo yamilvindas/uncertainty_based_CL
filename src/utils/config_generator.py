@@ -1,9 +1,11 @@
 """
     Generates the config files to run the different experiments.
 """
-import os
-import yaml
 import argparse
+import os
+
+import yaml
+
 
 def build_base_config(dataset_name, hits_data_paths=None):
     """
@@ -201,36 +203,37 @@ def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_u
                 # In this case we keep ALL the samples so all sample selection methods are the same
                 mem_select_strategies = ['uniform']
             else:
-                mem_select_strategies = ['uniform', 'uncertainty', 'loss', 'dissimilarity', 'hybrid']
+                mem_select_strategies = ['uniform', 'uncertainty', 'uncertainty-by-class', 'loss', 'dissimilarity', 'hybrid']
             for mem_strategy in mem_select_strategies:
                 # ===> Replay Only <===
                 replay_only = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B] if dataset == "HITS" else None)
                 replay_only["exp_id"] = f"{dataset}_{mem_folder}_Replay"
                 replay_only["ContinualLearning"]["Replay"]["use_replay"] = True
                 replay_only["ContinualLearning"]["Replay"]["capacity"] = capacity_ratio
-                replay_only["ContinualLearning"]["Replay"]["memory_strategy"] = mem_strategy
+                replay_only["ContinualLearning"]["Replay"]["memory_strategy"] = mem_strategy.replace("-by-class", "")
                 replay_only["ContinualLearning"]["Replay"]["lambda_replay"] = 1.0
                 replay_only["ContinualLearning"]["EWC"]["use_ewc"] = False
                 replay_only["ContinualLearning"]["EWC"]["lambda_ewc"] = 0.0
-                if (mem_strategy.lower() in ['uncertainty', 'hybrid']):
+                if (mem_strategy.lower() in ['uncertainty', 'uncertainty-by-class', 'hybrid']):
                     replay_only['ContinualLearning']['Replay']['we'] = 1.0
                     replay_only['ContinualLearning']['Replay']['wH'] = 1.0
                     replay_only['ContinualLearning']['Replay']['wa'] = 1.0
                     replay_only['ContinualLearning']['Replay']['alea_drop_fraction'] = 0.15
                     #replay_only['ContinualLearning']['Replay']['mc_passes'] = 10
                     replay_only['ContinualLearning']['Replay']['mc_passes'] = 20
+                    replay_only['ContinualLearning']['Replay']['by_class'] = (mem_strategy.lower() == 'uncertainty-by-class')
                     if (mem_strategy.lower() == 'hybrid'):
                         replay_only['ContinualLearning']['Replay']['wl'] = 1.0
                         replay_only['ContinualLearning']['Replay']['pool_multiplier'] = 3
-                if (mem_strategy.lower() in ['uncertainty', 'loss', 'hybrid']):
+                if (mem_strategy.lower() in ['uncertainty', 'uncertainty-by-class', 'loss', 'hybrid']):
                     replay_only['ContinualLearning']['Replay']['optimize_uniform_ratio'] = False
                     replay_only['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
-                    if (mem_strategy.lower() in ['uncertainty', 'hybrid']):
+                    if (mem_strategy.lower() in ['uncertainty', 'uncertainty-by-class', 'hybrid']):
                         #replay_only['Optuna']['n_trials'] = 75
                         replay_only['Optuna']['n_trials'] = 30
                 write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}.yaml"), replay_only)
                 # Save supplementary yaml file for loss and uncertainty approaches with fixed uniform ratio
-                if (mem_strategy.lower() in ['uncertainty', 'loss', 'hybrid']) and (generate_optuna_unif_ratio):
+                if (mem_strategy.lower() in ['uncertainty', 'loss', 'uncertainty-by-class', 'hybrid']) and (generate_optuna_unif_ratio):
                     replay_only['ContinualLearning']['Replay']['optimize_uniform_ratio'] = True
                     replay_only['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
                     write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}_OptunaUnifRatio.yaml"), replay_only)
@@ -242,10 +245,10 @@ def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_u
                     replay_ewc["ContinualLearning"]["Replay"]["use_replay"] = True
                     replay_ewc["ContinualLearning"]["Replay"]["capacity"] = capacity_ratio
                     replay_ewc["ContinualLearning"]["Replay"]["lambda_replay"] = 1.0
-                    replay_ewc["ContinualLearning"]["Replay"]["memory_strategy"] = mem_strategy
+                    replay_ewc["ContinualLearning"]["Replay"]["memory_strategy"] = mem_strategy.replace("-by-class", "")
                     replay_ewc["ContinualLearning"]["EWC"]["use_ewc"] = True
                     replay_ewc["ContinualLearning"]["EWC"]["lambda_ewc"] = 1.0e3
-                    if (mem_strategy.lower() in ['uncertainty', 'hybrid']):
+                    if (mem_strategy.lower() in ['uncertainty', 'uncertainty-by-class', 'hybrid']):
                         replay_ewc['ContinualLearning']['Replay']['we'] = 1.0
                         replay_ewc['ContinualLearning']['Replay']['wH'] = 1.0
                         replay_ewc['ContinualLearning']['Replay']['wa'] = 1.0
@@ -255,16 +258,16 @@ def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_u
                         if (mem_strategy.lower() == 'hybrid'):
                             replay_ewc['ContinualLearning']['Replay']['wl'] = 1.0
                             replay_ewc['ContinualLearning']['Replay']['pool_multiplier'] = 3
-                    if (mem_strategy.lower() in ['uncertainty', 'loss', 'hybrid']):
+                    if (mem_strategy.lower() in ['uncertainty', 'loss', 'uncertainty-by-class', 'hybrid']):
                         replay_ewc['ContinualLearning']['Replay']['optimize_uniform_ratio'] = False
                         replay_ewc['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
-                        if (mem_strategy.lower() in ['uncertainty', 'hybrid']):
+                        if (mem_strategy.lower() in ['uncertainty', 'uncertainty-by-class', 'hybrid']):
                             #replay_ewc['Optuna']['n_trials'] = 75
                             replay_ewc['Optuna']['n_trials'] = 30
                         
                     write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}_EWC.yaml"), replay_ewc)
                     # Save supplementary yaml file for loss and uncertainty approaches with fixed uniform ratio
-                    if (mem_strategy.lower() in ['uncertainty', 'loss', 'hybrid']) and (generate_optuna_unif_ratio):
+                    if (mem_strategy.lower() in ['uncertainty', 'loss', 'uncertainty-by-class', 'hybrid']) and (generate_optuna_unif_ratio):
                         replay_ewc['ContinualLearning']['Replay']['optimize_uniform_ratio'] = True
                         replay_ewc['ContinualLearning']['Replay']['uniform_ratio'] = 0.5
                         write_yaml(os.path.join(folder_path, f"Replay-{mem_strategy}_OptunaUnifRatio_EWC.yaml"), replay_ewc)
