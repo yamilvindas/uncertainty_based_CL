@@ -34,11 +34,6 @@ sys.path.append(os.path.abspath(os.path.join("..")))
 from src.data_processing.OrganMNIST import DataHandler
 
 
-# ── Default HDF5 paths ────────────────────────────────────────────────────────
-_DATA_ROOT = "/home/bahirah/uncertainty_based_CL/data/HITS Emboli/HITS-S51-13k-V9k/splits"
-TASK_A_HDF5 = os.path.join(_DATA_ROOT, "data_2tasks-src-CLsplit_taskA.hdf5")
-TASK_B_HDF5 = os.path.join(_DATA_ROOT, "data_2tasks-src-CLsplit_taskB.hdf5")
-
 # ── Class definitions ─────────────────────────────────────────────────────────
 CLASSES     = ["A", "ES", "EG"]
 CLASS_TO_IDX = {c: i for i, c in enumerate(CLASSES)}
@@ -169,7 +164,7 @@ class HITSHandler(DataHandler):
     Data handler for the HITS TCD Doppler emboli dataset.
 
     Follows the same interface as OrganMNISTHandler and CamelyonHandler:
-      handler = HITSHandler(batch_size=32)
+      handler = HITSHandler(batch_size=32, hdf5_a=TASK_A_HDF5.hdf5, hdf5_b=TASK_B_HDF5.hdf5)
       task_a, task_b = handler.get_tasks()
       task_a_train, task_a_val, task_a_test = task_a
 
@@ -182,10 +177,12 @@ class HITSHandler(DataHandler):
         hdf5_b     : path to Task B HDF5 file (default: TASK_B_HDF5)
     """
 
-    def __init__(self, batch_size: int = 32, val_pct: float = 0.15,
-                 seed: int = 42,
-                 hdf5_a: str = TASK_A_HDF5,
-                 hdf5_b: str = TASK_B_HDF5):
+    def __init__(self,
+                hdf5_a: str,
+                hdf5_b: str,
+                batch_size: int = 32, val_pct: float = 0.15,
+                seed: int = 42,
+                ):
         super().__init__(batch_size)
 
         self.val_pct = val_pct
@@ -216,7 +213,7 @@ class HITSHandler(DataHandler):
             task_b : (train_subset, val_subset, test_dataset)
 
         Example:
-            handler = HITSHandler(batch_size=32)
+            handler = HITSHandler(batch_size=32, hdf5_a=TASK_A_HDF5.hdf5, hdf5_b=TASK_B_HDF5.hdf5)
             (a_train, a_val, a_test), (b_train, b_val, b_test) = handler.get_tasks()
         """
         print("\n\n===> Loading HITS TCD Doppler dataset ===")

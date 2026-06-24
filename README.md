@@ -57,6 +57,9 @@ python src/utils/config\_generator.py
 If you also want to generate configuration files that explicitly combine EWC with replay-based CL, append the flag:  
 python src/utils/config\_generator.py \--generate\_EWC\_Replay\_combination
 
+If you want to use a HITS dataset, you need to specify the paths to the hdf5 files describing the splits:
+python src/utils/config\_generator.py --HITS-data-path-A path/to/data_A.hdf5 --HITS-data-path-B path/to/data_B.hdf5
+
 ### **B. Launch Experiments**
 
 **To launch a single, isolated experiment:**  
