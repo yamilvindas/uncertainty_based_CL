@@ -12,8 +12,8 @@ ContinualLearning:
     wa: 1.0
     alea_drop_fraction: 0.15
     mc_passes: 10
-    uniform_ratio: 0.0
     by_class: true
+    uniform_ratio: 0.5
   EWC:
     use_ewc: false
     lambda_ewc: 0.0

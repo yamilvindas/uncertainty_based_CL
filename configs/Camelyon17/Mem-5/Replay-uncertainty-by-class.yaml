@@ -1,19 +1,18 @@
-exp_id: Camelyon17_Mem-1_Replay
+exp_id: Camelyon17_Mem-5_Replay
 device: cuda:0
 results_dir: ./results
 ContinualLearning:
   Replay:
     use_replay: true
     memory_strategy: uncertainty
-    capacity: 0.01
+    capacity: 0.05
     lambda_replay: 1.0
     we: 1.0
     wH: 1.0
     wa: 1.0
     alea_drop_fraction: 0.15
-    mc_passes: 20
-    optimize_uniform_ratio: false
-    by_class: false
+    mc_passes: 10
+    by_class: true
     uniform_ratio: 0.5
   EWC:
     use_ewc: false
@@ -31,5 +30,4 @@ Training:
   batch_size: 64
   n_repetitions: 10
 Optuna:
-  use_optuna: true
   n_trials: 30
