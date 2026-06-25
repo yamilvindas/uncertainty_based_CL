@@ -12,7 +12,7 @@ ContinualLearning:
     wa: 1.0
     alea_drop_fraction: 0.15
     mc_passes: 20
-    by_class: false
+    by_class: true
     optimize_uniform_ratio: false
     uniform_ratio: 0.5
   EWC:
@@ -32,4 +32,4 @@ Training:
   n_repetitions: 10
 Optuna:
   use_optuna: true
-  n_trials: 75
+  n_trials: 30

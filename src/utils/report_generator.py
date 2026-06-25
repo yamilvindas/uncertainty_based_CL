@@ -1,13 +1,20 @@
-import os
 import glob
+import os
 import re
+from pathlib import Path
+
 import h5py
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
-from pathlib import Path
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, matthews_corrcoef, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    f1_score,
+    matthews_corrcoef,
+)
+
 
 # -------------------------------------------------------------------------
 # 1. METRIC EXTRACTION HELPER FUNCTIONS
@@ -29,6 +36,7 @@ def parse_h5_file(h5_path):
         with h5py.File(h5_path, 'r') as f:
             rep_keys = [k for k in f.keys() if k.startswith('Rep_')]
             if (not rep_keys):
+                print(f"[ERROR] No 'Rep_X' groups found in {h5_path}. Was the training completed?")
                 return None
             
             # Temporary storage for metrics across reps
@@ -79,10 +87,11 @@ def parse_h5_file(h5_path):
                     results[f"{k}_Mean"] = np.mean(v)
                     results[f"{k}_Std"] = np.std(v)
                 else:
+                    print(f"[ERROR] No valid data for {h5_path}: {k} has no values.")
                     return None
             return results
     except Exception as e:
-        print(f"Error parsing {h5_path}: {e}")
+        print(f"[ERROR] Error parsing {h5_path}: {e}")
         return None
 
 def extract_metadata(folder_name):
@@ -150,6 +159,7 @@ def generate_reports(results_dir="./results", output_dir="./report"):
     if df.empty:
         print("No valid data could be parsed.")
         return
+    df.to_csv(os.path.join(output_dir, "aggregated_results.csv"), index=False)
 
     # Helper: Format mean/std for LaTeX
     def format_mean_std(row, metric):

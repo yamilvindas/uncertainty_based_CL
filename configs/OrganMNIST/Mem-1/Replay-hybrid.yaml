@@ -12,6 +12,7 @@ ContinualLearning:
     wa: 1.0
     alea_drop_fraction: 0.15
     mc_passes: 20
+    by_class: false
     wl: 1.0
     pool_multiplier: 3
     optimize_uniform_ratio: false

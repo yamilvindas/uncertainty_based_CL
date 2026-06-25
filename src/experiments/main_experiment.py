@@ -3,41 +3,43 @@
     Main experiment to train and validate Continual Learning
     experiments for healthcare
 """
-import os
-import sys
-import yaml
-import copy
 import argparse
-from copy import deepcopy
-import h5py
+import os
 import random
+import sys
+from copy import deepcopy
+from pathlib import Path
+
+import h5py
+import numpy as np
+import optuna
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
-import numpy as np
-from pathlib import Path
+import yaml
+from optuna.trial import TrialState
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.utils.class_weight import compute_class_weight
-import optuna
-from optuna.trial import TrialState
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 # For internal imports
 sys.path.append(os.path.abspath(os.path.join("..")))
-from src.data_processing.OrganMNIST import OrganMNISTHandler
+from src.continual_learning.ewc import EWC
+from src.continual_learning.memory import LatentVisualizer, MemoryBuffer
 from src.data_processing.Camelyon17 import CamelyonHandler
 from src.data_processing.HITS import HITSHandler
-from src.continual_learning.memory import MemoryBuffer, LatentVisualizer
-from src.continual_learning.ewc import EWC
+from src.data_processing.OrganMNIST import OrganMNISTHandler
 from src.models.resnet import ResNet18CLModel
 from src.models.simple_cnn import SimpleCLModel
 from src.models.timefreq2dcnn import TimeFreq2DCNNModel
+
 
 class CLTrainer:
     def __init__(self, config):
         # Main config
         self.config = config
+        self.use_optuna = self.config["Optuna"].get('use_optuna', True)
 
         # Device for computations
         self.device = torch.device(self.config.get("device", 'cuda:0'))
@@ -57,6 +59,9 @@ class CLTrainer:
                 uniform_ratio = self.config['ContinualLearning']['Replay']['uniform_ratio']
                 if (optimize_uniform_ratio):
                     self.exp_id += f"_UnifRatio-{uniform_ratio}"
+                by_class = self.config['ContinualLearning']['Replay'].get('by_class', False)
+                if by_class:
+                    self.exp_id += f"_ByClass-{by_class}"
         # EWC
         if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)):
             self.exp_id += "_EWC-True"
@@ -130,7 +135,6 @@ class CLTrainer:
         """
             Extracts targets from the dataloader and computes balanced class weights.
         """
-        print("Computing class weights for the current task...")
         all_targets = []
         
         with torch.no_grad():
@@ -147,6 +151,7 @@ class CLTrainer:
                 
         all_targets = np.array(all_targets)
         unique_classes = np.unique(all_targets)
+        unique_classes.sort() # Make sure classes are sorted for consistent weight assignment with loss
         
         # Compute the balanced weights
         weights = compute_class_weight(
@@ -158,8 +163,8 @@ class CLTrainer:
         # Convert to a PyTorch tensor and move to the correct device
         weight_tensor = torch.tensor(weights, dtype=torch.float32).to(self.device)
         
-        print(f"Computed Class Weights: {weight_tensor.cpu().numpy()}")
-        return weight_tensor
+        print(f"Computed Class Weights: {weight_tensor.cpu().numpy()}, Unique Classes: {unique_classes}")
+        return weight_tensor, unique_classes
 
     def reset_state(self, memory_strategy):
         """
@@ -200,6 +205,10 @@ class CLTrainer:
         """
             Runs Optuna optimization, updates config, and prepares for the final run.
         """
+        if (not self.use_optuna):
+            print("\n\n==========> Skipping Optuna optimization; using configuration parameters as-is <==========\n")
+            return
+
         print(f"\n\n==========> Starting Optuna Optimization ({n_trials} trials) <==========")
         
         def objective(trial):
@@ -263,6 +272,7 @@ class CLTrainer:
 
                 # Re-initialize EWC for the Optuna trial
                 if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)):
+                    print("Computing class weights for the previous task to initialize EWC...")
                     previous_class_weights = self.compute_class_weights(self.previous_task_data_loader['Train'])
                     previous_criterion = nn.CrossEntropyLoss(weight=previous_class_weights.to(self.device), reduction='none')
                     self.ewc = EWC(self.model, self.previous_task_data_loader['Train'], self.device, previous_criterion)
@@ -282,7 +292,8 @@ class CLTrainer:
                                         }
                                     )
             # Class weights
-            class_weights = self.compute_class_weights(train_loader)
+            print(f"Computing class weights for Task {self.current_task}...")
+            class_weights, _ = self.compute_class_weights(train_loader)
             # Init
             self.initialize_task(class_weights)
             # Train
@@ -344,7 +355,7 @@ class CLTrainer:
             best_trial_number = other_study.best_trial.number
             # We load the best model from the previous task from the Baseline
             model_path = self.base_results_dir / f"{dataset_type}_NoMemory_EWC-False" / "models" / f"model_{self.current_task}_rep-{best_trial_number}_optuna.pt"
-            # TODO: IMPORTANT TO VERIFY IF THIS MAKE SENS FOR MORE THAN TWO TASKS
+            # TODO: IMPORTANT TO VERIFY IF THIS MAKE SENSE FOR MORE THAN TWO TASKS
         else: # We are doing optimization in the baseline model
             # Best trial
             best_trial_number = study.best_trial.number
@@ -355,13 +366,16 @@ class CLTrainer:
         
         # Perform one final reset with the newly discovered optimal configuration
         self.reset_state(self.memory_strategy)
-        print(f"\n\n==========> OTUNA optimization for task {self.current_task} finished <==========\n\n")
+        print(f"\n\n==========> OPTUNA optimization for task {self.current_task} finished <==========\n\n")
 
 
     def update_exp_params_optuna(self, task):
         """
             Updates the parameters of the experiment for the current task with the best found parameters with OPTUNA
         """
+        if (not self.use_optuna):
+            return
+
         is_continual = (self.config['ContinualLearning']['Replay'].get('use_replay', False)) or (self.config['ContinualLearning']['EWC'].get('use_ewc', False))
         if (is_continual) and (self.current_task.lower() == 'task_a'):
             # Get path to baseline trained model
@@ -381,7 +395,7 @@ class CLTrainer:
 
         # Retrieve and log best parameters
         best_params = study.best_params
-        print(f"\n\n==========> Optuna Search Complet <==========")
+        print(f"\n\n==========> Optuna Search Complete <==========")
         print(f"Best Trial Validation Score For Task {task}: {study.best_value:.4f}")
         print("Best Parameters:")
         for k, v in best_params.items():
@@ -500,6 +514,14 @@ class CLTrainer:
     def update_memory(self, dataloader):
         print(f"\n\n==========> UPDATING MEMORY <==========\n\n")
         if (self.memory is not None):
+            by_class = False
+            if self.memory_strategy.lower() == 'uncertainty' and self.config['ContinualLearning']['Replay'].get('by_class', True):
+                print("Computing class weights for uncertainty-based memory update...")
+                class_weights, unique_classes = self.compute_class_weights(dataloader)
+                # inverting the weights to get the distribution
+                class_distribution = {cls: 1 / weight / len(class_weights) for cls, weight in zip(unique_classes, class_weights.cpu().numpy())}
+                by_class = True
+                print("Class distribution for uncertainty-based memory update:", class_distribution)
             for batch in tqdm(dataloader):
                 # Get batch data
                 if (self.config['Dataset'].get('dataset_type', 'OrganMNIST') == "Camelyon17"):
@@ -528,7 +550,9 @@ class CLTrainer:
                                                                 wa=self.config['ContinualLearning']['Replay']['wa'],
                                                                 alea_drop_fraction=self.config['ContinualLearning']['Replay']['alea_drop_fraction'],
                                                                 mc_passes=self.config['ContinualLearning']['Replay']['mc_passes'],
-                                                                uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5)
+                                                                uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5),
+                                                                by_class=self.config['ContinualLearning']['Replay'].get('by_class', False),
+                                                                class_distribution=class_distribution if by_class else None
                                                             )
 
                     elif (self.memory_strategy.lower() == 'dissimilarity'):
@@ -659,7 +683,7 @@ class CLTrainer:
     def get_data_loaders(self, task_data):
         # Data splitting
         train_data, val_data, test_data = task_data
-
+        
         # Data loaders
         train_loader = DataLoader(train_data, batch_size=self.config['Training']['batch_size'], shuffle=True)
         val_loader = DataLoader(val_data, batch_size=self.config['Training']['batch_size'])
@@ -709,9 +733,11 @@ class CLTrainer:
             self.previous_task_data_loader = None
             # Update hyper-parameters for current task with best OPTUNA hyper-parameters
             # NOTE: to do before self.initialize_task(class_weights)
-            self.update_exp_params_optuna(task=self.current_task)
+            if (self.use_optuna):
+                self.update_exp_params_optuna(task=self.current_task)
             # Class weights
-            class_weights = self.compute_class_weights(self.loader_A)
+            print("Computing class weights for Task A...")
+            class_weights, _ = self.compute_class_weights(self.loader_A)
             # Init
             self.initialize_task(class_weights)
             # Get trained model
@@ -740,9 +766,11 @@ class CLTrainer:
             self.previous_task = 'Task_A'
             # Update hyper-parameters for current task with best OPTUNA hyper-parameters
             # NOTE: to do before self.initialize_task(class_weights)
-            self.update_exp_params_optuna(task=self.current_task)
+            if (self.use_optuna):
+                self.update_exp_params_optuna(task=self.current_task)
             # Class weights
-            class_weights = self.compute_class_weights(self.loader_B)
+            print("Computing class weights for Task B...")
+            class_weights, _ = self.compute_class_weights(self.loader_B)
             # Init
             self.initialize_task(class_weights)
             # Train
@@ -881,7 +909,7 @@ def main():
     # Define number of possible samples in the memory 
     mem_capacity_samples = int(config['ContinualLearning']['Replay']['capacity']*data_handler.n_all_train_samples)
     config['ContinualLearning']['Replay']['capacity_in_n_samples'] = mem_capacity_samples
-    print(f"\n\n==========> Memory capacity in number of samples: {mem_capacity_samples} (~{config['ContinualLearning']['Replay']['capacity']})")
+    print(f"\n\n==========> Memory capacity in number of samples: {mem_capacity_samples} (~{config['ContinualLearning']['Replay']['capacity']}), check: {mem_capacity_samples / data_handler.n_all_train_samples:.4f} <==========\n\n")
 
     #====================================================================================================#
     # Initialize Trainer (Model is created internally based on YAML)
@@ -894,7 +922,7 @@ def main():
     configs_save_dir.mkdir(parents=True, exist_ok=True)
     
     # Create an isolated deepcopy of the configuration before Optuna suggestions run
-    initial_config = copy.deepcopy(trainer.config)
+    initial_config = deepcopy(trainer.config)
     initial_config_path = configs_save_dir / "initial_config.yaml"
     with open(initial_config_path, 'w') as f:
         yaml.safe_dump(initial_config, f, default_flow_style=False, sort_keys=False)
@@ -910,25 +938,28 @@ def main():
     train_loaders = [loader_A, loader_B]
     val_loaders = [val_loader_A, val_loader_B]
     test_loaders = [test_loader_A, test_loader_B]
-    for i_task in range(len(tasks)):
-        print(f"\n\n==========> Hyper-parameter optimization of task {tasks[i_task]} <==========\n\n")
-        # Notice we pass the data. Optuna will test configurations and 
-        # mutate the trainer's config to lock in the best parameters.
-        current_task = tasks[i_task]
-        trainer.current_task = current_task
-        if (current_task.lower() != "task_a"): # We are not in the first task, so a previous data loader exists
-            trainer.previous_task_data_loader = {
-                                                    'Train': train_loaders[i_task-1],
-                                                    'Val': val_loaders[i_task-1],
-                                                    'Test': test_loaders[i_task-1]
-                                                }
-            trainer.previous_task = tasks[i_task-1]
-        else:
-            trainer.previous_task_data_loader = None
-            trainer.previous_task = None
-            
-        # Optimize
-        trainer.optimize_hyperparameters(data_tasks[i_task], n_trials=config['Optuna'].get('n_trials', 10))
+    if (trainer.use_optuna):
+        for i_task in range(len(tasks)):
+            print(f"\n\n==========> Hyper-parameter optimization of task {tasks[i_task]} <==========\n\n")
+            # Notice we pass the data. Optuna will test configurations and 
+            # mutate the trainer's config to lock in the best parameters.
+            current_task = tasks[i_task]
+            trainer.current_task = current_task
+            if (current_task.lower() != "task_a"): # We are not in the first task, so a previous data loader exists
+                trainer.previous_task_data_loader = {
+                                                        'Train': train_loaders[i_task-1],
+                                                        'Val': val_loaders[i_task-1],
+                                                        'Test': test_loaders[i_task-1]
+                                                    }
+                trainer.previous_task = tasks[i_task-1]
+            else:
+                trainer.previous_task_data_loader = None
+                trainer.previous_task = None
+                
+            # Optimize
+            trainer.optimize_hyperparameters(data_tasks[i_task], n_trials=config['Optuna'].get('n_trials', 10))
+    else:
+        print("\n\n==========> Optuna disabled in config; running directly with configured hyper-parameters <==========\n")
 
 
     #====================================================================================================#
@@ -940,7 +971,7 @@ def main():
 
     #====================================================================================================#
     # SAVE FINAL CONFIGURATION
-    # The trainer config now contains all optimized hyper-parameters from the Optuna phase
+    # The trainer config now contains the hyper-parameters used for this run (optimized during Optuna phase if enabled)
     final_config_path = configs_save_dir / "final_config.yaml"
     with open(final_config_path, 'w') as f:
         yaml.safe_dump(trainer.config, f, default_flow_style=False, sort_keys=False)
