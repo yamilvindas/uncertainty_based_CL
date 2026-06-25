@@ -31,4 +31,4 @@ Training:
   n_repetitions: 10
 Optuna:
   use_optuna: true
-  n_trials: 30
+  n_trials: 75
