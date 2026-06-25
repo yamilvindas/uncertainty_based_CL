@@ -143,6 +143,9 @@ try:
                 uniform_ratio = cl_cfg["Replay"]["uniform_ratio"]
                 if (optimize_uniform_ratio):
                     exp_id += f"_UnifRatio-{uniform_ratio}"
+                by_class = self.config["ContinualLearning"]["Replay"].get("by_class", False)
+                if by_class:
+                    self.exp_id += f"_ByClass-{by_class}"
             
         # EWC tags
         if cl_cfg.get("EWC", {}).get("use_ewc", False):
