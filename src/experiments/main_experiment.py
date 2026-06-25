@@ -39,6 +39,7 @@ class CLTrainer:
     def __init__(self, config):
         # Main config
         self.config = config
+        self.use_optuna = self.config["Optuna"].get('use_optuna', True)
 
         # Device for computations
         self.device = torch.device(self.config.get("device", 'cuda:0'))
@@ -204,6 +205,10 @@ class CLTrainer:
         """
             Runs Optuna optimization, updates config, and prepares for the final run.
         """
+        if (not self.use_optuna):
+            print("\n\n==========> Skipping Optuna optimization; using configuration parameters as-is <==========\n")
+            return
+
         print(f"\n\n==========> Starting Optuna Optimization ({n_trials} trials) <==========")
         
         def objective(trial):
@@ -368,6 +373,9 @@ class CLTrainer:
         """
             Updates the parameters of the experiment for the current task with the best found parameters with OPTUNA
         """
+        if (not self.use_optuna):
+            return
+
         is_continual = (self.config['ContinualLearning']['Replay'].get('use_replay', False)) or (self.config['ContinualLearning']['EWC'].get('use_ewc', False))
         if (is_continual) and (self.current_task.lower() == 'task_a'):
             # Get path to baseline trained model
@@ -725,7 +733,8 @@ class CLTrainer:
             self.previous_task_data_loader = None
             # Update hyper-parameters for current task with best OPTUNA hyper-parameters
             # NOTE: to do before self.initialize_task(class_weights)
-            self.update_exp_params_optuna(task=self.current_task)
+            if (self.use_optuna):
+                self.update_exp_params_optuna(task=self.current_task)
             # Class weights
             print("Computing class weights for Task A...")
             class_weights, _ = self.compute_class_weights(self.loader_A)
@@ -757,7 +766,8 @@ class CLTrainer:
             self.previous_task = 'Task_A'
             # Update hyper-parameters for current task with best OPTUNA hyper-parameters
             # NOTE: to do before self.initialize_task(class_weights)
-            self.update_exp_params_optuna(task=self.current_task)
+            if (self.use_optuna):
+                self.update_exp_params_optuna(task=self.current_task)
             # Class weights
             print("Computing class weights for Task B...")
             class_weights, _ = self.compute_class_weights(self.loader_B)
@@ -928,25 +938,28 @@ def main():
     train_loaders = [loader_A, loader_B]
     val_loaders = [val_loader_A, val_loader_B]
     test_loaders = [test_loader_A, test_loader_B]
-    for i_task in range(len(tasks)):
-        print(f"\n\n==========> Hyper-parameter optimization of task {tasks[i_task]} <==========\n\n")
-        # Notice we pass the data. Optuna will test configurations and 
-        # mutate the trainer's config to lock in the best parameters.
-        current_task = tasks[i_task]
-        trainer.current_task = current_task
-        if (current_task.lower() != "task_a"): # We are not in the first task, so a previous data loader exists
-            trainer.previous_task_data_loader = {
-                                                    'Train': train_loaders[i_task-1],
-                                                    'Val': val_loaders[i_task-1],
-                                                    'Test': test_loaders[i_task-1]
-                                                }
-            trainer.previous_task = tasks[i_task-1]
-        else:
-            trainer.previous_task_data_loader = None
-            trainer.previous_task = None
-            
-        # Optimize
-        trainer.optimize_hyperparameters(data_tasks[i_task], n_trials=config['Optuna'].get('n_trials', 10))
+    if (trainer.use_optuna):
+        for i_task in range(len(tasks)):
+            print(f"\n\n==========> Hyper-parameter optimization of task {tasks[i_task]} <==========\n\n")
+            # Notice we pass the data. Optuna will test configurations and 
+            # mutate the trainer's config to lock in the best parameters.
+            current_task = tasks[i_task]
+            trainer.current_task = current_task
+            if (current_task.lower() != "task_a"): # We are not in the first task, so a previous data loader exists
+                trainer.previous_task_data_loader = {
+                                                        'Train': train_loaders[i_task-1],
+                                                        'Val': val_loaders[i_task-1],
+                                                        'Test': test_loaders[i_task-1]
+                                                    }
+                trainer.previous_task = tasks[i_task-1]
+            else:
+                trainer.previous_task_data_loader = None
+                trainer.previous_task = None
+                
+            # Optimize
+            trainer.optimize_hyperparameters(data_tasks[i_task], n_trials=config['Optuna'].get('n_trials', 10))
+    else:
+        print("\n\n==========> Optuna disabled in config; running directly with configured hyper-parameters <==========\n")
 
 
     #====================================================================================================#
@@ -958,7 +971,7 @@ def main():
 
     #====================================================================================================#
     # SAVE FINAL CONFIGURATION
-    # The trainer config now contains all optimized hyper-parameters from the Optuna phase
+    # The trainer config now contains the hyper-parameters used for this run (optimized during Optuna phase if enabled)
     final_config_path = configs_save_dir / "final_config.yaml"
     with open(final_config_path, 'w') as f:
         yaml.safe_dump(trainer.config, f, default_flow_style=False, sort_keys=False)
