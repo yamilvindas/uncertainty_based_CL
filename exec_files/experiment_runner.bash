@@ -137,7 +137,7 @@ try:
 
 
             # Uniform combination (for loss and uncertainty approaches)
-            if (mem_strategy.lower() in ["uncertainty", "loss"]):
+            if (mem_strategy.lower() in ["uncertainty", "loss", "hybrid"]):
                 optimize_uniform_ratio = cl_cfg["Replay"].get("optimize_uniform_ratio", True)
                 exp_id += f"_OptUnifRatio-{optimize_uniform_ratio}"
                 uniform_ratio = cl_cfg["Replay"]["uniform_ratio"]
