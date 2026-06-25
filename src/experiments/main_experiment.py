@@ -330,6 +330,7 @@ class CLTrainer:
                                             direction="maximize", 
                                             study_name=f"{self.exp_id}_{self.current_task}",
                                             storage=storage_name,
+                                            sampler=optuna.samplers.TPESampler(seed=self.config.get('Seed', 42)), # Fix seed for reproducibility
                                             load_if_exists=True  # This allows resuming an interrupted study!
                                         )
             
