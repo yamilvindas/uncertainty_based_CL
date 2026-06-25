@@ -4,7 +4,6 @@
     experiments for healthcare
 """
 import argparse
-import copy
 import os
 import random
 import sys
@@ -135,7 +134,6 @@ class CLTrainer:
         """
             Extracts targets from the dataloader and computes balanced class weights.
         """
-        print("Computing class weights for the current task...")
         all_targets = []
         
         with torch.no_grad():
@@ -152,6 +150,7 @@ class CLTrainer:
                 
         all_targets = np.array(all_targets)
         unique_classes = np.unique(all_targets)
+        unique_classes.sort() # Make sure classes are sorted for consistent weight assignment with loss
         
         # Compute the balanced weights
         weights = compute_class_weight(
@@ -163,8 +162,8 @@ class CLTrainer:
         # Convert to a PyTorch tensor and move to the correct device
         weight_tensor = torch.tensor(weights, dtype=torch.float32).to(self.device)
         
-        print(f"Computed Class Weights: {weight_tensor.cpu().numpy()}")
-        return weight_tensor
+        print(f"Computed Class Weights: {weight_tensor.cpu().numpy()}, Unique Classes: {unique_classes}")
+        return weight_tensor, unique_classes
 
     def reset_state(self, memory_strategy):
         """
@@ -268,6 +267,7 @@ class CLTrainer:
 
                 # Re-initialize EWC for the Optuna trial
                 if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)):
+                    print("Computing class weights for the previous task to initialize EWC...")
                     previous_class_weights = self.compute_class_weights(self.previous_task_data_loader['Train'])
                     previous_criterion = nn.CrossEntropyLoss(weight=previous_class_weights.to(self.device), reduction='none')
                     self.ewc = EWC(self.model, self.previous_task_data_loader['Train'], self.device, previous_criterion)
@@ -287,7 +287,8 @@ class CLTrainer:
                                         }
                                     )
             # Class weights
-            class_weights = self.compute_class_weights(train_loader)
+            print(f"Computing class weights for Task {self.current_task}...")
+            class_weights, _ = self.compute_class_weights(train_loader)
             # Init
             self.initialize_task(class_weights)
             # Train
@@ -360,7 +361,7 @@ class CLTrainer:
         
         # Perform one final reset with the newly discovered optimal configuration
         self.reset_state(self.memory_strategy)
-        print(f"\n\n==========> OTUNA optimization for task {self.current_task} finished <==========\n\n")
+        print(f"\n\n==========> OPTUNA optimization for task {self.current_task} finished <==========\n\n")
 
 
     def update_exp_params_optuna(self, task):
@@ -386,7 +387,7 @@ class CLTrainer:
 
         # Retrieve and log best parameters
         best_params = study.best_params
-        print(f"\n\n==========> Optuna Search Complet <==========")
+        print(f"\n\n==========> Optuna Search Complete <==========")
         print(f"Best Trial Validation Score For Task {task}: {study.best_value:.4f}")
         print("Best Parameters:")
         for k, v in best_params.items():
@@ -505,6 +506,12 @@ class CLTrainer:
     def update_memory(self, dataloader):
         print(f"\n\n==========> UPDATING MEMORY <==========\n\n")
         if (self.memory is not None):
+            if self.memory_strategy.lower() == 'uncertainty' and self.config['ContinualLearning']['Replay'].get('by_class', True):
+                print("Computing class weights for uncertainty-based memory update...")
+                class_weights, unique_classes = self.compute_class_weights(dataloader)
+                # inverting the weights to get the distribution
+                class_distribution = {cls: 1 / weight / len(class_weights) for cls, weight in zip(unique_classes, class_weights.cpu().numpy())}
+                print("Class distribution for uncertainty-based memory update:", class_distribution)
             for batch in tqdm(dataloader):
                 # Get batch data
                 if (self.config['Dataset'].get('dataset_type', 'OrganMNIST') == "Camelyon17"):
@@ -534,7 +541,8 @@ class CLTrainer:
                                                                 alea_drop_fraction=self.config['ContinualLearning']['Replay']['alea_drop_fraction'],
                                                                 mc_passes=self.config['ContinualLearning']['Replay']['mc_passes'],
                                                                 uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5),
-                                                                by_class=self.config['ContinualLearning']['Replay'].get('by_class', False)
+                                                                by_class=self.config['ContinualLearning']['Replay'].get('by_class', False),
+                                                                class_distribution=class_distribution
                                                             )
 
                     elif (self.memory_strategy.lower() == 'dissimilarity'):
@@ -665,7 +673,7 @@ class CLTrainer:
     def get_data_loaders(self, task_data):
         # Data splitting
         train_data, val_data, test_data = task_data
-
+        
         # Data loaders
         train_loader = DataLoader(train_data, batch_size=self.config['Training']['batch_size'], shuffle=True)
         val_loader = DataLoader(val_data, batch_size=self.config['Training']['batch_size'])
@@ -717,7 +725,8 @@ class CLTrainer:
             # NOTE: to do before self.initialize_task(class_weights)
             self.update_exp_params_optuna(task=self.current_task)
             # Class weights
-            class_weights = self.compute_class_weights(self.loader_A)
+            print("Computing class weights for Task A...")
+            class_weights, _ = self.compute_class_weights(self.loader_A)
             # Init
             self.initialize_task(class_weights)
             # Get trained model
@@ -748,7 +757,8 @@ class CLTrainer:
             # NOTE: to do before self.initialize_task(class_weights)
             self.update_exp_params_optuna(task=self.current_task)
             # Class weights
-            class_weights = self.compute_class_weights(self.loader_B)
+            print("Computing class weights for Task B...")
+            class_weights, _ = self.compute_class_weights(self.loader_B)
             # Init
             self.initialize_task(class_weights)
             # Train
@@ -900,7 +910,7 @@ def main():
     configs_save_dir.mkdir(parents=True, exist_ok=True)
     
     # Create an isolated deepcopy of the configuration before Optuna suggestions run
-    initial_config = copy.deepcopy(trainer.config)
+    initial_config = deepcopy(trainer.config)
     initial_config_path = configs_save_dir / "initial_config.yaml"
     with open(initial_config_path, 'w') as f:
         yaml.safe_dump(initial_config, f, default_flow_style=False, sort_keys=False)

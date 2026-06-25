@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, Dataset
 
 class MemoryBuffer:
     """
-        Replay mempry buffer.
+        Replay memory buffer.
     """
     def __init__(self, capacity, device):
         self.capacity = capacity
@@ -117,7 +117,8 @@ class MemoryBuffer:
                                     alea_drop_fraction=0.15,
                                     mc_passes=10,
                                     uniform_ratio=0.5,
-                                    by_class = False
+                                    by_class = False,
+                                    class_distribution = None
                                 ):
         """
             Hybrid sampling: Retain X% uniformly, and the rest using advanced uncertainty curation 
@@ -131,6 +132,8 @@ class MemoryBuffer:
             - mc_passes (int): Number of Monte Carlo forward passes for uncertainty estimation
             - uniform_ratio (float): Ratio of samples to retain uniformly
             - by_class (bool): If True, perform uncertainty-based selection per class to ensure class balance in the memory buffer.
+            - class_distribution (dict): A dictionary mapping class labels to their respective proportions in the current task training set. 
+            This is used to determine the proportion of samples to retain per class when by_class is True.
         """
         #print(f"\n\n==========> Uncertainty-based memory update <==========\n\n")
         #====================================================================================================#
@@ -219,18 +222,20 @@ class MemoryBuffer:
             return
 
         # If capacity is reached, sample based on a ratio of uniform and uncertainty-score sampling
+        final_selected_indices = []
         if by_class:
-            final_selected_indices = []
-            available_classes = np.unique(np.array(all_y))
+            assert class_distribution is not None, "Class_distribution must be provided when by_class is True"
+            available_classes = list(class_distribution.keys())
             cum_class_target_capacity = 0
             for i_c, c in enumerate(available_classes):
                 class_mask = (np.array(all_y) == c)
                 class_indices = np.where(class_mask)[0]
-                if i_c == len(available_classes) - 1:
+                
+                if i_c < len(available_classes) - 1:
+                    class_target_capacity = round(class_distribution[c] * target_capacity) # We need to pick class_ratio * target_capacity samples for this class
+                else:
                     # Last class takes the remaining capacity
                     class_target_capacity = target_capacity - cum_class_target_capacity
-                else:
-                    class_target_capacity = round(len(class_indices) / pool_size * target_capacity) # We need to pick class_ratio_in_pool * capacity samples
 
                 class_selected_indices = self._get_uncertainty_based_indices(class_indices, scores[class_indices], ua_mean[class_indices], class_target_capacity, uniform_ratio, alea_drop_fraction)
                 final_selected_indices.extend(class_selected_indices)

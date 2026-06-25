@@ -159,6 +159,7 @@ def generate_reports(results_dir="./results", output_dir="./report"):
     if df.empty:
         print("No valid data could be parsed.")
         return
+    df.to_csv(os.path.join(output_dir, "aggregated_results.csv"), index=False)
 
     # Helper: Format mean/std for LaTeX
     def format_mean_std(row, metric):
