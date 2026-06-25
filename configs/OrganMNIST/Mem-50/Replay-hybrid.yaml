@@ -1,18 +1,20 @@
-exp_id: OrganMNIST_Mem-5_Replay
+exp_id: OrganMNIST_Mem-50_Replay
 device: cuda:0
 results_dir: ./results
 ContinualLearning:
   Replay:
     use_replay: true
-    memory_strategy: uncertainty
-    capacity: 0.05
+    memory_strategy: hybrid
+    capacity: 0.5
     lambda_replay: 1.0
     we: 1.0
     wH: 1.0
     wa: 1.0
     alea_drop_fraction: 0.15
     mc_passes: 20
-    by_class: true
+    by_class: false
+    wl: 1.0
+    pool_multiplier: 3
     optimize_uniform_ratio: false
     uniform_ratio: 0.5
   EWC:
