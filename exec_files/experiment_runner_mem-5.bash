@@ -33,7 +33,8 @@ echo " 4. Modifiers: No EWC (NoMemory/Standard Replay) -> With EWC"
 echo "----------------------------------------------------------"
 
 # Define the precise datasets and folder sequence to build the queue
-DATASETS=("OrganMNIST" "Camelyon17" "HITS")
+#DATASETS=("OrganMNIST" "Camelyon17" "HITS")
+DATASETS=("OrganMNIST")
 SEQUENCE=("Mem-5")
 
 # 1. Build the ordered queue of configuration files
@@ -143,9 +144,9 @@ try:
                 uniform_ratio = cl_cfg["Replay"]["uniform_ratio"]
                 if (optimize_uniform_ratio):
                     exp_id += f"_UnifRatio-{uniform_ratio}"
-                by_class = self.config["ContinualLearning"]["Replay"].get("by_class", False)
+                by_class = cl_cfg["Replay"].get("by_class", False)
                 if by_class:
-                    self.exp_id += f"_ByClass-{by_class}"
+                    exp_id += f"_ByClass-{by_class}"
             
         # EWC tags
         if cl_cfg.get("EWC", {}).get("use_ewc", False):
