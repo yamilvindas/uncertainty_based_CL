@@ -276,7 +276,7 @@ class MemoryBuffer:
         
         # Uniform Selection
         # uniform_indices = np.random.choice(candidate_indices, num_uniform, replace=False)
-        uniform_idx = np.random.randint(0, num_candidate, size=num_uniform, dtype=int)
+        uniform_idx = np.random.choice(np.arange(num_candidate), num_uniform, replace=False)
         uniform_sample_indices = candidate_indices[uniform_idx]
 
         # Create mask to ONLY consider the remaining unpicked samples for strategy
@@ -310,12 +310,14 @@ class MemoryBuffer:
         #====================================================================================================#
         # Get candidate indices and scores
         candidate_scores = scores[valid_strategic_mask]
+        candidate_idx = np.where(valid_strategic_mask)[0]
 
         #====================================================================================================#
         #====================================================================================================#
         # Extract top performing candidates up to remaining strategic capacity
         top_candidate_sort_idx = np.argsort(candidate_scores)[::-1][:num_strategic]
-        strategic_sample_indices = candidate_indices[top_candidate_sort_idx]
+        strategic_idx = candidate_idx[top_candidate_sort_idx]
+        strategic_sample_indices = candidate_indices[strategic_idx]
 
         
         #====================================================================================================#

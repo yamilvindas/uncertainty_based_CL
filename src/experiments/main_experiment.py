@@ -506,11 +506,13 @@ class CLTrainer:
     def update_memory(self, dataloader):
         print(f"\n\n==========> UPDATING MEMORY <==========\n\n")
         if (self.memory is not None):
+            by_class = False
             if self.memory_strategy.lower() == 'uncertainty' and self.config['ContinualLearning']['Replay'].get('by_class', True):
                 print("Computing class weights for uncertainty-based memory update...")
                 class_weights, unique_classes = self.compute_class_weights(dataloader)
                 # inverting the weights to get the distribution
                 class_distribution = {cls: 1 / weight / len(class_weights) for cls, weight in zip(unique_classes, class_weights.cpu().numpy())}
+                by_class = True
                 print("Class distribution for uncertainty-based memory update:", class_distribution)
             for batch in tqdm(dataloader):
                 # Get batch data
@@ -542,7 +544,7 @@ class CLTrainer:
                                                                 mc_passes=self.config['ContinualLearning']['Replay']['mc_passes'],
                                                                 uniform_ratio=self.config['ContinualLearning']['Replay'].get('uniform_ratio', 0.5),
                                                                 by_class=self.config['ContinualLearning']['Replay'].get('by_class', False),
-                                                                class_distribution=class_distribution
+                                                                class_distribution=class_distribution if by_class else None
                                                             )
 
                     elif (self.memory_strategy.lower() == 'dissimilarity'):
