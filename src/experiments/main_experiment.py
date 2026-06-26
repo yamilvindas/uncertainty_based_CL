@@ -342,7 +342,7 @@ class CLTrainer:
 
             # Doing study only if target number of completed trials has not been reached (in case we continue a study)
             if (n_remaining_trials_to_do > 0):
-                study.optimize(objective, n_trials=n_trials)
+                study.optimize(objective, n_trials=n_remaining_trials_to_do)
 
         # Save best model for current task
         if (is_continual) and (self.current_task.lower() == 'task_a'):
