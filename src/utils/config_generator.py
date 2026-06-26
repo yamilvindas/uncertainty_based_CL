@@ -43,7 +43,7 @@ def build_base_config(dataset_name, hits_data_paths=None):
                                     "lr": 1.0e-3,
                                     "weight_decay": 1.0e-5,
                                     "batch_size": 64,
-                                    "n_repetitions": 10
+                                    "n_repetitions": 5
                                 },
 
                     "Optuna": {

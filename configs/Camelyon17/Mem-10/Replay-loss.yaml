@@ -23,7 +23,7 @@ Training:
   lr: 0.001
   weight_decay: 1.0e-05
   batch_size: 64
-  n_repetitions: 10
+  n_repetitions: 5
 Optuna:
   use_optuna: true
   n_trials: 30
