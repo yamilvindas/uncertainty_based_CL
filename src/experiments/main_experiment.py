@@ -273,7 +273,7 @@ class CLTrainer:
                 # Re-initialize EWC for the Optuna trial
                 if (self.config['ContinualLearning']['EWC'].get('use_ewc', False)):
                     print("Computing class weights for the previous task to initialize EWC...")
-                    previous_class_weights = self.compute_class_weights(self.previous_task_data_loader['Train'])
+                    previous_class_weights, _ = self.compute_class_weights(self.previous_task_data_loader['Train'])
                     previous_criterion = nn.CrossEntropyLoss(weight=previous_class_weights.to(self.device), reduction='none')
                     self.ewc = EWC(self.model, self.previous_task_data_loader['Train'], self.device, previous_criterion)
 
