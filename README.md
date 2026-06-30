@@ -72,6 +72,8 @@ Each completed experiment generates a structured folder inside ./results/EXP-ID/
 * 📁 **metrics/**: Contains the OPTUNA .db tracking file and predictions_i.h5. The HDF5 file logs all model predictions, targets, and probabilities across training phases.  
 * 📁 **models/**: Stores the serialized .pt weights for all models generated during the repeated holdouts.
 
+**Note*:* To run any of the continual learning experiments, you must first run a full baseline experiment (without memory and EWC), as all continual learning experiments use the baseline as a starting point.
+
 **To run all experiments sequentially (Batch Mode):**  
 Use the provided bash runner. It includes a resume feature, meaning if the process is interrupted, re-running the command will skip completed experiments and pick up right where it left off.  
 bash exec\_files/experiment\_runner.bash
