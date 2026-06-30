@@ -15,14 +15,19 @@ from sklearn.metrics import (
     matthews_corrcoef,
 )
 
-
 # -------------------------------------------------------------------------
 # 1. METRIC EXTRACTION HELPER FUNCTIONS
 # -------------------------------------------------------------------------
+METRIC_TABLE_NAME = {
+    'Acc': 'Acc',
+    'BalAcc': 'Bal. Acc',
+    'MCC': 'MCC',
+}
+
 def calculate_metrics(targets, preds):
     return {
-        'Accuracy': accuracy_score(targets, preds),
-        'Balanced_Acc': balanced_accuracy_score(targets, preds),
+        'Acc': accuracy_score(targets, preds),
+        'BalAcc': balanced_accuracy_score(targets, preds),
         'MCC': matthews_corrcoef(targets, preds),
         'F1_Macro': f1_score(targets, preds, average='macro', zero_division=0)
     }
@@ -43,8 +48,16 @@ def parse_h5_file(h5_path):
             metrics_storage = {
                                 'Final_Acc_Task_A': [],
                                 'Final_Acc_Task_B': [],
-                                'Forgetting_Task_A': [],
-                                'BWT_Task_A': []
+                                'Forgetting_Acc_Task_A': [],
+                                'BWT_Acc_Task_A': [],
+                                'Final_BalAcc_Task_A': [],
+                                'Final_BalAcc_Task_B': [],
+                                'Forgetting_BalAcc_Task_A': [],
+                                'BWT_BalAcc_Task_A': [],
+                                'Final_MCC_Task_A': [],
+                                'Final_MCC_Task_B': [],
+                                'Forgetting_MCC_Task_A': [],
+                                'BWT_MCC_Task_A': []
                             }
             
             for rep_key in rep_keys:
@@ -64,22 +77,24 @@ def parse_h5_file(h5_path):
                 # Task A after Task A
                 targets_A = post_A_group['Test_Task_A']['targets'][:]
                 preds_A = post_A_group['Test_Task_A']['preds'][:]
-                acc_A = accuracy_score(targets_A, preds_A)
+                metrics_A = calculate_metrics(targets_A, preds_A)
                 
                 # Task A after Task B
                 targets_B_A = post_B_group['Test_Task_A']['targets'][:]
                 preds_B_A = post_B_group['Test_Task_A']['preds'][:]
-                acc_B_A = accuracy_score(targets_B_A, preds_B_A)
-                
+                metrics_B_A = calculate_metrics(targets_B_A, preds_B_A)
+
                 # Task B after Task B
                 targets_B = post_B_group['Test_Task_B']['targets'][:]
                 preds_B = post_B_group['Test_Task_B']['preds'][:]
-                acc_B = accuracy_score(targets_B, preds_B)
+                metrics_B = calculate_metrics(targets_B, preds_B)
                 
-                metrics_storage['Final_Acc_Task_A'].append(acc_B_A)
-                metrics_storage['Final_Acc_Task_B'].append(acc_B)
-                metrics_storage['Forgetting_Task_A'].append(acc_A - acc_B_A)
-                metrics_storage['BWT_Task_A'].append(acc_B_A - acc_A)
+                # Accuracy metrics
+                for metrics_name in ['Acc', 'BalAcc', 'MCC']:
+                    metrics_storage[f'Final_{metrics_name}_Task_A'].append(metrics_B_A[metrics_name])
+                    metrics_storage[f'Final_{metrics_name}_Task_B'].append(metrics_B[metrics_name])
+                    metrics_storage[f'Forgetting_{metrics_name}_Task_A'].append(metrics_A[metrics_name] - metrics_B_A[metrics_name])
+                    metrics_storage[f'BWT_{metrics_name}_Task_A'].append(metrics_B_A[metrics_name] - metrics_A[metrics_name])
 
             # Calculate Means and Stds
             for k, v in metrics_storage.items():
@@ -125,7 +140,7 @@ def extract_metadata(folder_name):
 # -------------------------------------------------------------------------
 # 2. MAIN REPORT GENERATION
 # -------------------------------------------------------------------------
-def generate_reports(results_dir="./results", output_dir="./report"):
+def generate_reports(metrics_to_show=['Acc', 'BalAcc', 'MCC'], results_dir="./results", output_dir="./report"):
     """
         Generated with Gemini 3.1 Pro
     """
@@ -165,7 +180,7 @@ def generate_reports(results_dir="./results", output_dir="./report"):
     def format_mean_std(row, metric):
         mean = row[f'{metric}_Mean'] * 100
         std = row[f'{metric}_Std'] * 100
-        return f"{mean:.2f} \pm {std:.2f}"
+        return f"{mean:.2f} \\pm {std:.2f}"
 
     # -------------------------------------------------------------------------
     # 3. LATEX TABLE GENERATION
@@ -180,14 +195,24 @@ def generate_reports(results_dir="./results", output_dir="./report"):
         ds_df['Group'] = pd.Categorical(ds_df['Group'], categories=group_order, ordered=True)
         ds_df = ds_df.sort_values(['Group', 'Capacity', 'Approach'])
         
+        column_names = []
+        for m in metrics_to_show:
+            column_names.extend([
+                f"{METRIC_TABLE_NAME[m]} Task A (\\%)",
+                f"{METRIC_TABLE_NAME[m]} Task B (\\%)",
+                f"Forgetting {METRIC_TABLE_NAME[m]} (\\%)"
+            ])
+        column_line = "} & \\textbf{".join(column_names)
+        tabular_align = "ll" + "ccc" * len(metrics_to_show)
+        
         latex_lines = [
             "\\begin{table*}[t]",
             "\\centering",
             "\\caption{Continual Learning Results on " + dataset + "}",
             "\\label{tab:results_" + dataset.lower() + "}",
-            "\\begin{tabular}{llccc}",
+            f"\\begin{{tabular}}{{{tabular_align}}}",
             "\\toprule",
-            "\\textbf{Memory} & \\textbf{Approach} & \\textbf{Final Acc Task A (\\%)} & \\textbf{Final Acc Task B (\\%)} & \\textbf{Forgetting Task A (\\%)} \\\\",
+            "\\textbf{Memory} & \\textbf{Approach} & \\textbf{" + column_line + "} \\\\",
             "\\midrule"
         ]
         
@@ -207,11 +232,15 @@ def generate_reports(results_dir="./results", output_dir="./report"):
                     tmp_current_group = current_group
                 latex_lines.append(f"\\multirow{{{n_rows}}}{{*}}{{{tmp_current_group}}} ")
             
-            acc_a = format_mean_std(row, 'Final_Acc_Task_A')
-            acc_b = format_mean_std(row, 'Final_Acc_Task_B')
-            forg_a = format_mean_std(row, 'Forgetting_Task_A')
+            metric_line = f"& {row['Approach']} "
+            for m in metrics_to_show:
+                metric_a = format_mean_std(row, f'Final_{m}_Task_A')
+                metric_b = format_mean_std(row, f'Final_{m}_Task_B')
+                forgetting = format_mean_std(row, f'Forgetting_{m}_Task_A')
+                metric_line += f"& ${metric_a}$ & ${metric_b}$ & ${forgetting}$ "
+            metric_line += "\\\\"
             
-            latex_lines.append(f"& {row['Approach']} & ${acc_a}$ & ${acc_b}$ & ${forg_a}$ \\\\")
+            latex_lines.append(metric_line)
             
         latex_lines.extend([
             "\\bottomrule",
@@ -245,7 +274,15 @@ def generate_reports(results_dir="./results", output_dir="./report"):
         metrics_to_plot = {
             'Final_Acc_Task_A_Mean': ('Final Accuracy - Task A', 'higher'),
             'Final_Acc_Task_B_Mean': ('Final Accuracy - Task B', 'higher'),
-            'Forgetting_Task_A_Mean': ('Catastrophic Forgetting - Task A', 'lower')
+            'Forgetting_Acc_Task_A_Mean': ('Catastrophic Forgetting - Task A', 'lower'),
+            # Balanced Accuracy trend plots
+            'Final_BalAcc_Task_A_Mean': ('Final Balanced Accuracy - Task A', 'higher'),
+            'Final_BalAcc_Task_B_Mean': ('Final Balanced Accuracy - Task B', 'higher'),
+            'Forgetting_BalAcc_Task_A_Mean': ('Catastrophic Forgetting Bal.Acc - Task A', 'lower'),
+            # MCC trend plots
+            'Final_MCC_Task_A_Mean': ('Final MCC - Task A', 'higher'),
+            'Final_MCC_Task_B_Mean': ('Final MCC - Task B', 'higher'),
+            'Forgetting_MCC_Task_A_Mean': ('Catastrophic Forgetting MCC - Task A', 'lower')
         }
         
         for metric_col, (metric_label, direction) in metrics_to_plot.items():
@@ -315,6 +352,8 @@ def generate_reports(results_dir="./results", output_dir="./report"):
             data=ds_df,
             x='Approach',
             y='Final_Acc_Task_A_Mean',
+            hue='Approach',
+            legend=False,
             palette="viridis"
         )
         
@@ -340,7 +379,85 @@ def generate_reports(results_dir="./results", output_dir="./report"):
         plt.close()
         print(f"Bar plot generated: {bar_path}")
 
+        # Additional bar plot for Balanced Accuracy at 10%
+        plt.figure(figsize=(12, 6))
+        ds_df = ds_df.sort_values('Approach')
+
+        sns.barplot(
+            data=ds_df,
+            x='Approach',
+            y='Final_BalAcc_Task_A_Mean',
+            hue='Approach',
+            legend=False,
+            palette="viridis"
+        )
+
+        x_coords = np.arange(len(ds_df))
+        plt.errorbar(
+            x=x_coords,
+            y=ds_df['Final_BalAcc_Task_A_Mean'],
+            yerr=ds_df['Final_BalAcc_Task_A_Std'],
+            fmt='none',
+            c='black',
+            capsize=5
+        )
+
+        plt.title(f"{dataset}: Task A Final Balanced Accuracy Comparison (at {int(target_capacity*100)}% Memory)", fontsize=14)
+        plt.xticks(rotation=45, ha='right')
+        plt.ylabel("Balanced Accuracy", fontsize=12)
+        plt.tight_layout()
+
+        bal_bar_path = os.path.join(output_dir, f"{dataset}_BarPlot_Mem10_BalAccA.png")
+        plt.savefig(bal_bar_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Bar plot generated: {bal_bar_path}")
+
+        # MCC bar plot at 10%
+        plt.figure(figsize=(12, 6))
+        ds_df = ds_df.sort_values('Approach')
+
+        sns.barplot(
+            data=ds_df,
+            x='Approach',
+            y='Final_MCC_Task_A_Mean',
+            hue='Approach',
+            legend=False,
+            palette="viridis"
+        )
+
+        x_coords = np.arange(len(ds_df))
+        plt.errorbar(
+            x=x_coords,
+            y=ds_df['Final_MCC_Task_A_Mean'],
+            yerr=ds_df['Final_MCC_Task_A_Std'],
+            fmt='none',
+            c='black',
+            capsize=5
+        )
+
+        plt.title(f"{dataset}: Task A Final MCC Comparison (at {int(target_capacity*100)}% Memory)", fontsize=14)
+        plt.xticks(rotation=45, ha='right')
+        plt.ylabel("MCC", fontsize=12)
+        plt.tight_layout()
+
+        mcc_bar_path = os.path.join(output_dir, f"{dataset}_BarPlot_Mem10_MCC_A.png")
+        plt.savefig(mcc_bar_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Bar plot generated: {mcc_bar_path}")
+
     print("\nReport generation completed successfully! All files are in the './report' directory.")
 
 if __name__ == "__main__":
-    generate_reports()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Generate reports from H5 prediction files.")
+    parser.add_argument('--m_to_show', help='Metrics to include in the LaTeX table', nargs='+', default=['Acc', 'BalAcc', 'MCC'])
+    args = parser.parse_args()
+    
+    metrics_to_show = args.m_to_show
+    for m in metrics_to_show:
+        if m not in METRIC_TABLE_NAME:
+            print(f"[ERROR] Invalid metric '{m}' specified. Valid options are: {list(METRIC_TABLE_NAME.keys())}")
+            exit(1)
+
+    generate_reports(metrics_to_show=metrics_to_show)
