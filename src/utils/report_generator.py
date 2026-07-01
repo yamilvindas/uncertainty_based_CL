@@ -115,15 +115,24 @@ def extract_metadata(folder_name):
     
     is_ewc = "EWC-True" in folder_name
     
-    if "MemStrategy" in folder_name:
+    if ("MemStrategy" in folder_name):
+        # Strategy name
         strategy_match = re.search(r"MemStrategy-([^_]+)", folder_name)
         capacity_match = re.search(r"MemCapacity-([^_]+)", folder_name)
         
         strategy = strategy_match.group(1).capitalize() if strategy_match else "Unknown"
         capacity = float(capacity_match.group(1)) if capacity_match else 0.0
-        
+
         approach_name = f"{strategy} Replay"
-        if is_ewc: approach_name += " + EWC"
+        
+        # By class approach?
+        if ('ByClass-True' in folder_name):
+            approach_name += " + ByClass"
+        
+        # EWC combined?
+        
+        if (is_ewc):
+            approach_name += " + EWC"
         
         group = f"Mem-{int(capacity * 100)}%"
     else:
@@ -134,6 +143,7 @@ def extract_metadata(folder_name):
         else:
             approach_name = "Baseline (No Memory)"
             group = "Baselines"
+
             
     return dataset, approach_name, group, capacity, is_ewc
 
