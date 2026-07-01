@@ -32,7 +32,11 @@ class EWC:
 
         # Compute the matrix with the given dataloader
         self.model.eval()
-        for x, y in self.dataloader:
+        for batch in self.dataloader:
+            if len(batch) == 2:
+                x, y = batch
+            else:
+                x, y, _ = batch
             # Get input data and labels
             if (isinstance(y, tuple) or isinstance(y, list)):
                 y = y[0]
