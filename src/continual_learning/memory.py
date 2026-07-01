@@ -2,11 +2,18 @@
 """
     Class defined the memory buffer for replay-based learning.
 """
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from sklearn.manifold import TSNE
 from torch.utils.data import DataLoader, Dataset
+
+from data_processing.Camelyon17 import CamelyonHandler
+from data_processing.HITS import HITSDataset
+from data_processing.OrganMNIST import OrganMNISTHandler
 
 
 class MemoryBuffer:
@@ -525,9 +532,19 @@ class LatentVisualizer:
         Allows to visualize the retained replay memory against all the samples
         from all tasks.
     """
-    def __init__(self, model, device):
-        self.model = model.to(device)
+    def __init__(self, model, device, dataset_name=None):
+        self.model = model.to(device) if model is not None else None
         self.device = device
+        self.class_names = None
+        if dataset_name is not None:
+            if dataset_name.lower() == "hits":
+                self.class_names = {idx: class_name for class_name, idx in HITSDataset.CLASS_TO_IDX.items()}
+            elif dataset_name.lower() == "organmnist":
+                if OrganMNISTHandler.IDX_TO_CLASS is None:
+                    OrganMNISTHandler.load_class_mapping()
+                self.class_names = OrganMNISTHandler.IDX_TO_CLASS
+            elif dataset_name.lower() == "camelyon17":
+                self.class_names = CamelyonHandler.IDX_TO_CLASS
 
     def extract_features_and_labels(self, dataloader):
         self.model.eval()
@@ -546,44 +563,84 @@ class LatentVisualizer:
         return np.concatenate(features), np.concatenate(labels)
 
     def plot_memory_representation(self, task_a_loader, task_b_loader, memory_buffer, save_path=None):
+        """visualize or save (if save_path provided) two figures, one showing the distribution of the two tasks and the memory buffer, and another showing the class distribution of the two tasks and the memory buffer.
+        If the t-SNE dataset has already been computed and saved under save_path with "_dataset.csv" suffix, it will be loaded to avoid recomputation. In this case, provided loaders can be None.
+
+        Args:
+            task_a_loader (torch.utils.data.DataLoader): Dataloader of task A dataset.
+            task_b_loader (torch.utils.data.DataLoader): Dataloader of task B dataset.
+            memory_buffer (ReplayBuffer): Current memory buffer, samples can be redundant with loader A and B.
+            save_path (str or Path, optional): Template path to save figures, for example path/to/Memory_0.png. Defaults to None.
+        """
         print("\n\n==========> Extracting features for visualization <==========")
+
+        # Getting save paths for dataset and plots
+        save_path = Path(save_path) if save_path is not None else None
+        dataset_save_path = None if save_path is None else save_path.with_name(f"{save_path.stem}_dataset.csv")
+        task_plot_path = None if save_path is None else save_path.with_name(f"{save_path.stem}_tasks{save_path.suffix}")
+        class_plot_path = None if save_path is None else save_path.with_name(f"{save_path.stem}_classes{save_path.suffix}")
+       
+        # Load  stored representation if exists 
+        if dataset_save_path.exists():
+            print(f"Dataset CSV already exists at {dataset_save_path}. Skipping t-SNE computation.")
+            df = pd.read_csv(dataset_save_path)
+            latent_2d = df[['tsne_1', 'tsne_2']].values
+            labels_task = df['task_label'].values
+            labels_A = df[df['task_label'] == 0]['class_label'].values
+            labels_B = df[df['task_label'] == 1]['class_label'].values
+            labels_mem = df[df['task_label'] == 2]['class_label'].values
         
-        # Extract whole datasets
-        feat_A, _ = self.extract_features_and_labels(task_a_loader)
-        feat_B, _ = self.extract_features_and_labels(task_b_loader)
-        
-        # Extract Memory Buffer
-        mem_dataset = memory_buffer.get_dataset()
-        if mem_dataset is None:
-            print("Memory is empty. Cannot plot.")
-            return
+        # Compute t-SNE projection
+        else:
+            # Extract whole datasets
+            feat_A, labels_A = self.extract_features_and_labels(task_a_loader)
+            feat_B, labels_B = self.extract_features_and_labels(task_b_loader)
             
-        mem_loader = DataLoader(mem_dataset, batch_size=32, shuffle=False)
-        feat_mem, _ = self.extract_features_and_labels(mem_loader)
+            # Extract Memory Buffer
+            mem_dataset = memory_buffer.get_dataset()
+            if mem_dataset is None:
+                print("Memory is empty. Cannot plot.")
+                return
+                
+            mem_loader = DataLoader(mem_dataset, batch_size=32, shuffle=False)
+            feat_mem, labels_mem = self.extract_features_and_labels(mem_loader)
 
-        # Concatenate everything for t-SNE fitting
-        all_features = np.vstack((feat_A, feat_B, feat_mem))
-        
-        # Generate Labels for coloring: 0 for Task A, 1 for Task B, 2 for Memory
-        labels = np.array([0]*len(feat_A) + [1]*len(feat_B) + [2]*len(feat_mem))
+            # Concatenate everything for t-SNE fitting
+            all_features = np.vstack((feat_A, feat_B, feat_mem))
+            
+            # Generate Labels for coloring: 0 for Task A, 1 for Task B, 2 for Memory
+            labels_task = np.array([0]*len(feat_A) + [1]*len(feat_B) + [2]*len(feat_mem))
 
-        print("\n\n==========> Computing t-SNE (This may take a minute) <==========\n")
-        tsne = TSNE(n_components=2, random_state=42, perplexity=30)
-        latent_2d = tsne.fit_transform(all_features)
+            print("\n\n==========> Computing t-SNE (This may take a minute) <==========\n")
+            tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+            latent_2d = tsne.fit_transform(all_features)
 
         # Split back for plotting
-        latent_A = latent_2d[labels == 0]
-        latent_B = latent_2d[labels == 1]
-        latent_mem = latent_2d[labels == 2]
+        latent_A = latent_2d[labels_task == 0]
+        latent_B = latent_2d[labels_task == 1]
+        latent_mem = latent_2d[labels_task == 2]
+        
+        #----- Save the dataset for external analysis
+        if dataset_save_path is not None:
+            df = pd.DataFrame({
+                'tsne_1': latent_2d[:, 0],
+                'tsne_2': latent_2d[:, 1],
+                'task_label': labels_task,
+                'class_label': np.concatenate((labels_A, labels_B, labels_mem))
+            })
+            df.to_csv(dataset_save_path, index=False)
+            print(f"Saved t-SNE dataset to {dataset_save_path}")
 
+        #----- Plot tasks and memory in a single figure
+        task_colors = ['blue', 'green', 'red']  # Task A, Task B, Memory
         plt.figure(figsize=(10, 8))
         
         # Plot full datasets with low alpha (transparency)
-        plt.scatter(latent_A[:, 0], latent_A[:, 1], c='blue', alpha=0.3, label='Task A Data', s=10)
-        plt.scatter(latent_B[:, 0], latent_B[:, 1], c='green', alpha=0.3, label='Task B Data', s=10)
+        plt.scatter(latent_A[:, 0], latent_A[:, 1], c=task_colors[0], alpha=0.3, label='Task A Data', s=10)
+        plt.scatter(latent_B[:, 0], latent_B[:, 1], c=task_colors[1], alpha=0.3, label='Task B Data', s=10)
         
         # Plot memory on top with distinct marker and high visibility
-        plt.scatter(latent_mem[:, 0], latent_mem[:, 1], c='red', marker='*', edgecolor='black', 
+        plt.scatter(latent_mem[:, 0], latent_mem[:, 1], c=task_colors[2], marker='*', edgecolor='black', 
                     s=150, alpha=1.0, label='Memory Buffer')
 
         plt.title("t-SNE Projection: Dataset Distribution vs. Replay Memory")
@@ -594,5 +651,71 @@ class LatentVisualizer:
         if (save_path is None):
             plt.show()
         else:
-            plt.savefig(save_path, dpi=300)
+            plt.savefig(task_plot_path, dpi=300)
+        
+        #----- Plot classes and memory in a single figure
+        available_labels = list(np.unique(np.concatenate((labels_A, labels_B, labels_mem))))
+        class_colors = {label: plt.cm.tab20(label) for label in available_labels}
+        plt.figure(figsize=(10, 8))
+    
+        # Plot full datasets
+        # Filled circles - task A
+        plt.scatter(
+            latent_A[:, 0],
+            latent_A[:, 1],
+            c=[class_colors[label] for label in labels_A],
+            marker='o',
+            edgecolors='none',
+            alpha=0.8,
+            s=20,
+        )
 
+        # Hollow circles - task B
+        plt.scatter(
+            latent_B[:, 0],
+            latent_B[:, 1],
+            facecolors='none',
+            edgecolors=[class_colors[label] for label in labels_B],
+            marker='o',
+            linewidths=1.0,  # optional: adjust edge thickness
+            alpha=0.3,
+            s=20,
+        )
+        
+        # Plot memory on top with high visibility
+        plt.scatter(latent_mem[:, 0], latent_mem[:, 1], c=[class_colors[label] for label in labels_mem], marker='*', edgecolor='black', 
+                    s=150, alpha=1.0, label='Memory Buffer')
+
+        plt.title("t-SNE Projection: Class Distribution vs. Replay Memory")
+        plt.xlabel("t-SNE Dimension 1")
+        plt.ylabel("t-SNE Dimension 2")
+        
+        plt.legend(handles=
+                        [plt.Line2D([0], [0], color="w",marker='o', label=f'Class {self.class_names[label]  if self.class_names is not None else label}', markerfacecolor=class_colors[label], markersize=10) for label in available_labels] + 
+                        [plt.Line2D([0], [0], marker='*', color='w', label='Memory Buffer', markerfacecolor='white', markeredgecolor='black', markersize=15)] + 
+                        [plt.Line2D([0], [0], marker='o', color="w", label='Task A', markerfacecolor='black', markersize=10)] + 
+                        [plt.Line2D([0], [0], marker='o', color='w', label='Task B', markerfacecolor='white', markeredgecolor='black', markersize=10)],
+                        loc='best')
+        plt.grid(True)
+        if (save_path is None):
+            plt.show()
+        else:
+            plt.savefig(class_plot_path, dpi=300)
+
+###-------------------- Visualizing memory representation --------------------###
+if __name__ == "__main__":
+    import argparse
+    
+    argparser = argparse.ArgumentParser(description="Test the LatentVisualizer with synthetic data.")
+    argparser.add_argument("--save_path", type=str, default=None, help="Path to save the plots and dataset.")
+    argparser.add_argument("--dataset_name", type=str, default=None, help="Name of the dataset.")
+    args = argparser.parse_args()
+    
+    # Plot memory representation testing
+    latent_visualizer = LatentVisualizer(model=None, device='cpu', dataset_name=args.dataset_name)
+    latent_visualizer.plot_memory_representation(
+        task_a_loader=None,
+        task_b_loader=None,
+        memory_buffer=None,
+        save_path=args.save_path # Path for which a dataset already exists
+    )

@@ -4,7 +4,9 @@
     experiments for healthcare
 """
 import copy
+
 import torch
+
 
 class EWC:
     def __init__(self, model, dataloader, device, criterion):
@@ -36,7 +38,7 @@ class EWC:
             if len(batch) == 2:
                 x, y = batch
             else:
-                x, y, _ = batch
+                x, y, *_ = batch
             # Get input data and labels
             if (isinstance(y, tuple) or isinstance(y, list)):
                 y = y[0]

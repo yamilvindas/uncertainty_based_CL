@@ -2,24 +2,13 @@
 """
     Data handler for OrganMNIST dataset.
 """
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset, Subset, ConcatDataset
-import torchvision.transforms as transforms
-import torchvision.models as models
-from torchvision.models.resnet import ResNet18_Weights
-
-import numpy as np
-from sklearn.metrics import accuracy_score
-import optuna
-import copy
-
 # Dataset specific imports
 import medmnist
+import numpy as np
+import torch
+import torchvision.transforms as transforms
 from medmnist import INFO
-from wilds import get_dataset
-from wilds.common.data_loaders import get_eval_loader
+
 
 class DataHandler:
     def __init__(self, batch_size):
@@ -39,6 +28,16 @@ class DataHandler:
         return torch.FloatTensor(weights)
 
 class OrganMNISTHandler(DataHandler):
+    #----- Class attributes and methods -----
+    IDX_TO_CLASS = None
+    
+    
+    def load_class_mapping():
+        if OrganMNISTHandler.IDX_TO_CLASS is None:
+            info = INFO['organamnist']
+            OrganMNISTHandler.IDX_TO_CLASS = {int(i): class_name for i, class_name in info['label'].items()}
+    
+    #----- Instance attributes and methods -----
     def __init__(self, batch_size, lite=True):
         super().__init__(batch_size)
         if (lite):
@@ -58,7 +57,11 @@ class OrganMNISTHandler(DataHandler):
         info = INFO[data_flag]
         DataClass = getattr(medmnist, info['python_class'])
         dataset = DataClass(split=split, transform=self.transform, download=True)
-        dataset.labels = dataset.labels.squeeze() 
+        dataset.labels = dataset.labels.squeeze()
+        
+        # Load the class mapping if not already loaded
+        self.load_class_mapping()
+
         return dataset
 
     def get_tasks(self):

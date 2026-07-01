@@ -18,26 +18,20 @@
 """
 
 import os
-import sys
 import random
+import sys
 from collections import Counter
-from PIL import Image
 
 import h5py
 import numpy as np
 import torch
-from torch.utils.data import Dataset, Subset
 import torchvision.transforms as transforms
+from PIL import Image
+from torch.utils.data import Dataset, Subset
 
 # For internal imports
 sys.path.append(os.path.abspath(os.path.join("..")))
 from src.data_processing.OrganMNIST import DataHandler
-
-
-# ── Class definitions ─────────────────────────────────────────────────────────
-CLASSES     = ["A", "ES", "EG"]
-CLASS_TO_IDX = {c: i for i, c in enumerate(CLASSES)}
-
 
 # =============================================================================
 # Internal PyTorch Dataset — reads PNG paths from HDF5
@@ -56,6 +50,11 @@ class HITSDataset(Dataset):
         transform : torchvision transform pipeline
     """
 
+    #----- Class attributes and methods -----
+    CLASSES     = ["A", "ES", "EG"]
+    CLASS_TO_IDX = {c: i for i, c in enumerate(CLASSES)}
+
+    #----- Instance attributes and methods -----
     def __init__(self, hdf5_path: str, split: str = "train",
                  transform=None):
         self.hdf5_path = hdf5_path
@@ -90,11 +89,11 @@ class HITSDataset(Dataset):
                 raw_class = raw_class.strip()
                 png_path  = png_path.strip()
 
-                if raw_class not in CLASS_TO_IDX or not png_path:
+                if raw_class not in HITSDataset.CLASS_TO_IDX or not png_path:
                     skipped += 1
                     continue
 
-                self.samples.append((png_path, CLASS_TO_IDX[raw_class]))
+                self.samples.append((png_path, HITSDataset.CLASS_TO_IDX[raw_class]))
 
             if skipped:
                 print(f"  [INFO] Skipped {skipped} invalid samples "
@@ -104,7 +103,7 @@ class HITSDataset(Dataset):
         dist  = Counter(lbl for _, lbl in self.samples)
         total = len(self.samples)
         print(f"  [{self.split}] {total} samples loaded")
-        for idx, cname in enumerate(CLASSES):
+        for idx, cname in enumerate(HITSDataset.CLASSES):
             n = dist.get(idx, 0)
             print(f"    {cname}: {n} ({n/total*100:.1f}%)")
 

@@ -5,11 +5,10 @@
 import os
 import sys
 
+import numpy as np
 import torch
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader, Dataset, Subset, ConcatDataset
-
-import numpy as np
+from torch.utils.data import ConcatDataset, Subset
 
 # Dataset specific imports
 from wilds import get_dataset
@@ -21,6 +20,14 @@ from src.data_processing.OrganMNIST import DataHandler
 
 
 class CamelyonHandler(DataHandler):
+    """Loads the Camelyon17 dataset and provides train/val/test splits for continual learning tasks.
+    y is binary. It is 1 if the central 32x32 region contains any tumor tissue, and 0 otherwise.
+    """
+    #----- Class attributes and methods -----
+    CLASSES = ["Normal", "Tumor"]
+    IDX_TO_CLASS = {i: c for i, c in enumerate(CLASSES)}
+    
+    #----- Instance attributes and methods -----
     def __init__(self, batch_size, lite=True, samples_per_stratum=2500, cache_dir="./data/camelyon17_v1.0/"):
         # NOTE: Added samples_per_stratum and cache_dir to manage undersampling size and file saving
         super().__init__(batch_size)

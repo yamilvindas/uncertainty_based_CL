@@ -811,7 +811,7 @@ class CLTrainer:
                 device = torch.device(self.config.get("device", 'cuda:0'))
 
                 # Visualization
-                visualizer = LatentVisualizer(self.model, device)
+                visualizer = LatentVisualizer(self.model, device, dataset_name=self.config['Dataset'].get('dataset_type', None))
                 visualizer.plot_memory_representation(self.loader_A, self.loader_B, self.memory, save_path=memories_fig_path)
 
         # Compute Mean and Standard Deviation
