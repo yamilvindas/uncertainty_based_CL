@@ -9,9 +9,12 @@ import warnings
 # Suppress sklearn undefined metric warnings for 0 division
 warnings.filterwarnings('ignore', category=UserWarning)
 
+# Internal imports
+from src.utils.report_generator import METRIC_TABLE_NAME, calculate_metrics
+
 def get_metrics_from_h5(h5_path):
     """
-        Extracts the core Continual Learning metrics (Acc A, Acc B, Forgetting A) 
+        Extracts the core Continual Learning metrics
         for every repetition inside the HDF5 file.
     """
     path = Path(h5_path)
@@ -23,6 +26,20 @@ def get_metrics_from_h5(h5_path):
         'Final_Acc_B': [],
         'Forgetting_A': []
     }
+    metrics = {
+                                'Final_Acc_Task_A': [],
+                                'Final_Acc_Task_B': [],
+                                'Forgetting_Acc_Task_A': [],
+                                'BWT_Acc_Task_A': [],
+                                'Final_BalAcc_Task_A': [],
+                                'Final_BalAcc_Task_B': [],
+                                'Forgetting_BalAcc_Task_A': [],
+                                'BWT_BalAcc_Task_A': [],
+                                'Final_MCC_Task_A': [],
+                                'Final_MCC_Task_B': [],
+                                'Forgetting_MCC_Task_A': [],
+                                'BWT_MCC_Task_A': []
+                            }
     
     with h5py.File(path, 'r') as f:
         exp_name = f.attrs.get('experiment_name', path.parent.parent.name)
@@ -41,25 +58,28 @@ def get_metrics_from_h5(h5_path):
             if ('Test_Task_A' not in post_A_group) or ('Test_Task_A' not in post_B_group) or ('Test_Task_B' not in post_B_group):
                 continue
                 
-            # Acc A after learning A
+            # Metric A after learning A
             t_A_A = post_A_group['Test_Task_A']['targets'][:]
             p_A_A = post_A_group['Test_Task_A']['preds'][:]
-            acc_A_A = accuracy_score(t_A_A, p_A_A) * 100.0
+            metrics_A_A = calculate_metrics(t_A_A, p_A_A)
             
-            # Acc A after learning B (Final Acc A)
+            # Metric A after learning B (Final Metric A)
             t_B_A = post_B_group['Test_Task_A']['targets'][:]
             p_B_A = post_B_group['Test_Task_A']['preds'][:]
-            acc_B_A = accuracy_score(t_B_A, p_B_A) * 100.0
+            metrics_B_A = calculate_metrics(t_B_A, p_B_A)
             
-            # Acc B after learning B (Final Acc B)
+            # Metric B after learning B (Final Metric B)
             t_B_B = post_B_group['Test_Task_B']['targets'][:]
             p_B_B = post_B_group['Test_Task_B']['preds'][:]
-            acc_B_B = accuracy_score(t_B_B, p_B_B) * 100.0
-            
-            metrics['Final_Acc_A'].append(acc_B_A)
-            metrics['Final_Acc_B'].append(acc_B_B)
-            metrics['Forgetting_A'].append(acc_A_A - acc_B_A)
-            
+            metrics_B_B = calculate_metrics(t_B_B, p_B_B)
+
+            # Extract the relevant metrics
+            for metric_name in METRIC_TABLE_NAME.keys():
+                metrics[f'Final_{metric_name}_Task_A'].append(metrics_B_A[metric_name])
+                metrics[f'Final_{metric_name}_Task_B'].append(metrics_B_B[metric_name])
+                metrics[f'Forgetting_{metric_name}_Task_A'].append(metrics_A_A[metric_name] - metrics_B_A[metric_name])
+                metrics[f'BWT_{metric_name}_Task_A'].append(metrics_B_A[metric_name] - metrics_A_A[metric_name])            
+
     return exp_name, metrics
 
 def evaluate_significance(vals_1, vals_2, metric_name, alpha, higher_is_better=True):
@@ -132,7 +152,12 @@ def main():
     print("=" * 70)
     print(f"===> Bonferroni Correction : Applied (n={bonferroni_n})")
     print(f"===> Adjusted Alpha        : {adjusted_alpha:.5f}")
-    
+
+    # Metric to use 
+    #METRIC_TO_USE = "Acc"
+    METRIC_TO_USE = "BalAcc"
+    #METRIC_TO_USE = "MCC"
+
     # Get metrics
     try:
         name1, metrics1 = get_metrics_from_h5(model_1_h5)
@@ -140,36 +165,36 @@ def main():
     except Exception as e:
         print(f"[ERROR] {e}")
         return
-    print(f"===> Model 1: {name1} (n={len(metrics1['Final_Acc_A'])})")
-    print(f"===> Model 2: {name2} (n={len(metrics2['Final_Acc_A'])})")
+    print(f"===> Model 1: {name1} (n={len(metrics1[f'Final_{METRIC_TO_USE}_Task_A'])})")
+    print(f"===> Model 2: {name2} (n={len(metrics2[f'Final_{METRIC_TO_USE}_Task_A'])})")
     print("-" * 70)
 
     # Verify that both models have at least one repetition
-    if (len(metrics1['Final_Acc_A']) == 0) or (len(metrics2['Final_Acc_A']) == 0):
+    if (len(metrics1[f'Final_{METRIC_TO_USE}_Task_A']) == 0) or (len(metrics2[f'Final_{METRIC_TO_USE}_Task_A']) == 0):
         print("[ERROR] One or both models have 0 completed repetitions parsed.")
         return
 
     # Compare metrics for Task A
     evaluate_significance(
-        metrics1['Final_Acc_A'], 
-        metrics2['Final_Acc_A'], 
-        "Final_Accuracy_Task_A",  
+        metrics1[f'Final_{METRIC_TO_USE}_Task_A'], 
+        metrics2[f'Final_{METRIC_TO_USE}_Task_A'], 
+        f"Final_{METRIC_TO_USE}_Task_A",  
         adjusted_alpha,
         higher_is_better=True
     )
     # Compare metrics for Task B
     evaluate_significance(
-        metrics1['Final_Acc_B'], 
-        metrics2['Final_Acc_B'], 
-        "Final_Accuracy_Task_B",  
+        metrics1[f'Final_{METRIC_TO_USE}_Task_B'], 
+        metrics2[f'Final_{METRIC_TO_USE}_Task_B'], 
+        f"Final_{METRIC_TO_USE}_Task_B",  
         adjusted_alpha,
         higher_is_better=True
     )
     # Compare forgetting metrics
     evaluate_significance(
-        metrics1['Forgetting_A'], 
-        metrics2['Forgetting_A'], 
-        "Forgetting_Task_A",  
+        metrics1[f'Forgetting_{METRIC_TO_USE}_Task_A'], 
+        metrics2[f'Forgetting_{METRIC_TO_USE}_Task_A'], 
+        f"Forgetting_{METRIC_TO_USE}_Task_A",  
         adjusted_alpha,
         higher_is_better=False
     )
