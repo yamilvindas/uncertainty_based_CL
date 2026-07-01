@@ -533,7 +533,12 @@ class LatentVisualizer:
         self.model.eval()
         features, labels = [], []
         with torch.no_grad():
-            for x, y in dataloader:
+            for batch in dataloader:
+                if len(batch) == 2:
+                    x, y = batch
+                else:
+                    x, y, *_ = batch
+
                 if isinstance(y, tuple) or isinstance(y, list): y = y[0]
                 feat = self.model.extract_features(x.to(self.device))
                 features.append(feat.cpu().numpy())
