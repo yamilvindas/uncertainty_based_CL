@@ -110,8 +110,16 @@ def parse_h5_file(h5_path):
         return None
 
 def extract_metadata(folder_name):
-    """Parses the experiment ID folder name to extract method details."""
-    dataset = "OrganMNIST" if "OrganMNIST" in folder_name else "Camelyon17" if "Camelyon17" in folder_name else "Unknown"
+    """
+        Parses the experiment ID folder name to extract method details.
+    """
+    dataset = "Unknown"
+    if ("OrganMNIST" in folder_name):
+        dataset = "OrganMNIST"
+    elif ("Camelyon17" in folder_name):
+        dataset = "Camelyon17"
+    elif ("HITS" in folder_name):
+        dataset = "HITS"
     
     is_ewc = "EWC-True" in folder_name
     
