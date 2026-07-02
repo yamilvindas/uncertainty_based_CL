@@ -318,7 +318,7 @@ class CLTrainer:
         is_continual = (self.config['ContinualLearning']['Replay'].get('use_replay', False)) or (self.config['ContinualLearning']['EWC'].get('use_ewc', False))
         if (is_continual) and (self.current_task.lower() == 'task_a'):
             # In this case we do not optimiye the model for task A
-            print(f"\n\n==========> IGNORING OPTUNA OPTIMIZATION FOR TASK A AS WE HAVE A CONTINUAL LEARNING EPXERIMENT (USING BASELINE OPTUNA RESULTS)\n\n")
+            print(f"\n\n==========> IGNORING OPTUNA OPTIMIZATION FOR TASK A AS WE HAVE A CONTINUAL LEARNING EXPERIMENT (USING BASELINE OPTUNA RESULTS)\n\n")
             pass
         else:       
             # Define the SQLite database path inside the results folder
@@ -581,10 +581,14 @@ class CLTrainer:
         if (self.memory.capacity <= n_samples_dataloader) and (n_samples_in_memory != self.memory.capacity):
             raise RuntimeError(f"PROBLEM: the replay-memory is not full even though there are more samples in the previous task than the memory capacity (memory_capacity = {self.memory.capacity}, current number of samples in the memory: {n_samples_in_memory}, total number of samples in previous task: {n_samples_dataloader}).")
 
-    def train_single_task(self, task_name, train_loader, eval_loaders_dict, rep, save_results=True):
+    def train_single_task(self, task_name, train_loader, eval_loaders_dict, rep, save_results=True, replay_memory_only=False):
         # Update memory if necessary
         if (self.config['ContinualLearning']['Replay'].get('use_replay', False)) and (self.previous_task_data_loader is not None):
             self.update_memory(dataloader=self.previous_task_data_loader['Train'])
+            
+            if replay_memory_only:
+                print(f"\n\n==========> REPLAY MEMORY ONLY ASKED, STOPPING TRAINING TASK B.... <==========\n\n")
+                return
 
         # Activate train mode
         self.model.train()
@@ -693,7 +697,7 @@ class CLTrainer:
         return train_loader, val_loader, test_loader
 
 
-    def repeated_holdout(self, task_a_data, task_b_data, ext_test_data=None, save_results=True, n_repetitions=5):
+    def repeated_holdout(self, task_a_data, task_b_data, ext_test_data=None, save_results=True, n_repetitions=5, replay_memory_only=False):
         # Get per-task data loaders
         self.loader_A, val_A_loader, test_A_loader = self.get_data_loaders(task_a_data)
         self.loader_B, val_B_loader, test_B_loader = self.get_data_loaders(task_b_data)
@@ -713,7 +717,7 @@ class CLTrainer:
         # Dictionary to aggregate results across multiple repetitions
         metrics_summary = {'Val_Task_A': [], 'Val_Task_B': [], 'Test_Task_A': [], 'Test_Task_B': []}
         if (ext_test_data):
-            metrics_summary['Ext_Test'] = []
+            metrics_summary['External_Test'] = []
 
         for rep in range(n_repetitions):
             if (save_results):
@@ -780,7 +784,7 @@ class CLTrainer:
                                                 'Val': val_A_loader,
                                                 'Test': test_A_loader,
                                              }
-            self.train_single_task(self.current_task, self.loader_B, eval_loaders, rep, save_results)
+            self.train_single_task(self.current_task, self.loader_B, eval_loaders, rep, save_results, replay_memory_only=replay_memory_only)
             # Save model
             if (save_results):
                 self.save_model(self.current_task, rep)
@@ -864,6 +868,7 @@ def main():
     # Add the arguments to the parser
     ap.add_argument('--parameters_file', required=True, help="Yaml parameters for the experiment", type=str)
     ap.add_argument('--seed', default=42, help="Seed to use for the experiment", type=int)
+    ap.add_argument('--replay-memory', action='store_true', help="Only replay the memory but does not evaluate the full dataset", default=False)
     args = vars(ap.parse_args())
 
     # Getting the value of the arguments
@@ -875,7 +880,9 @@ def main():
 
     # Fix seed
     set_seed(seed)
-
+    
+    # Get the replay memory flag
+    replay_memory_only = args['replay_memory']
 
     #====================================================================================================#
     #============================================ Experiment ============================================#
@@ -898,10 +905,10 @@ def main():
         data_handler = HITSHandler(
                                         batch_size=batch_size,
                                         hdf5_a=config['Dataset']['task_a_hdf5'],
-                                        hdf5_b=config['Dataset']['task_b_hdf5']
+                                        hdf5_b=config['Dataset']['task_b_hdf5'],
+                                        hdf5_ext=config['Dataset']['task_ext_hdf5'] if 'task_ext_hdf5' in config['Dataset'] else None,
                                     )
-        task_a_data, task_b_data = data_handler.get_tasks()
-        ext_test_data = None
+        task_a_data, task_b_data, ext_test_data = data_handler.get_tasks()
 
     else:
         raise ValueError(f"Dataset type {dataset_type} not valid.")
@@ -968,7 +975,7 @@ def main():
     # The trainer is currently loaded with the best hyperparameters
     # and a fresh model state.
     print("\n\n==========> Starting final full run with optimal configuration <==========\n")
-    trainer.repeated_holdout(task_a_data, task_b_data, ext_test_data, save_results=True, n_repetitions=config['Training'].get('n_repetitions', 5))
+    trainer.repeated_holdout(task_a_data, task_b_data, ext_test_data, save_results=not(replay_memory_only), n_repetitions=config['Training'].get('n_repetitions', 5), replay_memory_only=replay_memory_only)
 
     #====================================================================================================#
     # SAVE FINAL CONFIGURATION

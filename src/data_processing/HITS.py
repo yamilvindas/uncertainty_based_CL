@@ -23,8 +23,6 @@ import sys
 from collections import Counter
 
 import h5py
-import numpy as np
-import torch
 import torchvision.transforms as transforms
 from PIL import Image
 from torch.utils.data import Dataset, Subset
@@ -179,6 +177,7 @@ class HITSHandler(DataHandler):
     def __init__(self,
                 hdf5_a: str,
                 hdf5_b: str,
+                hdf5_ext: str = None,
                 batch_size: int = 32, val_pct: float = 0.15,
                 seed: int = 42,
                 ):
@@ -188,7 +187,7 @@ class HITSHandler(DataHandler):
         self.seed    = seed
         self.hdf5_a  = hdf5_a
         self.hdf5_b  = hdf5_b
-
+        self.hdf5_ext = hdf5_ext
         # Override base class transform with HITS-specific preprocessing.
         # Input spectrograms are (3, 96, 224) — resize to match model input.
         # ImageNet normalization is used as in OrganMNIST (lite=False) and
@@ -212,12 +211,13 @@ class HITSHandler(DataHandler):
             task_b : (train_subset, val_subset, test_dataset)
 
         Example:
-            handler = HITSHandler(batch_size=32, hdf5_a=TASK_A_HDF5.hdf5, hdf5_b=TASK_B_HDF5.hdf5)
-            (a_train, a_val, a_test), (b_train, b_val, b_test) = handler.get_tasks()
+            handler = HITSHandler(batch_size=32, hdf5_a=TASK_A_HDF5.hdf5, hdf5_b=TASK_B_HDF5.hdf5, hdf5_ext=TASK_EXT_HDF5.hdf5)
+            (a_train, a_val, a_test), (b_train, b_val, b_test), ext_test = handler.get_tasks()
         """
         print("\n\n===> Loading HITS TCD Doppler dataset ===")
         print(f"  Task A: {self.hdf5_a}")
-        print(f"  Task B: {self.hdf5_b}\n")
+        print(f"  Task B: {self.hdf5_b}")
+        print(f"  External Test: {self.hdf5_ext}\n")
 
         # ── Task A ────────────────────────────────────────────────────────
         print("--- Task A ---")
@@ -232,6 +232,13 @@ class HITSHandler(DataHandler):
         task_b_test       = HITSDataset(self.hdf5_b, "test",  self.transform)
         task_b_train, task_b_val = _stratified_split(
             task_b_full_train, self.val_pct, self.seed)
+        
+        # ── External Test ────────────────────────────────────────────────────────
+        if self.hdf5_ext is not None:
+            print("\n--- External Test ---")
+            task_ext_test = HITSDataset(self.hdf5_ext, "test", self.transform)
+        else:
+            task_ext_test = None
 
         # ── Summary ───────────────────────────────────────────────────────
         self.n_all_train_samples = (len(task_a_full_train) +
@@ -244,4 +251,36 @@ class HITSHandler(DataHandler):
               f"val={len(task_b_val)}  test={len(task_b_test)}")
 
         return (task_a_train, task_a_val, task_a_test), \
-               (task_b_train, task_b_val, task_b_test)
+               (task_b_train, task_b_val, task_b_test), task_ext_test
+
+#---------- Analyzing resulting dataset --------------------
+if __name__ == "__main__":
+    import argparse
+    arg_parser = argparse.ArgumentParser(description="HITS Dataset Handler Test")
+    arg_parser.add_argument("--hdf5_a", type=str, required=True,
+                            help="Path to Task A HDF5 file")
+    arg_parser.add_argument("--hdf5_b", type=str, required=True,
+                            help="Path to Task B HDF5 file")
+    arg_parser.add_argument("--hdf5_ext", type=str, required=True,
+                            help="Path to Task B HDF5 file")
+    args = arg_parser.parse_args()
+    
+    print(args.hdf5_a)
+    print(args.hdf5_b)
+    
+    # Example usage
+    batch_size = 32
+    data_handler = HITSHandler(batch_size=batch_size, hdf5_a=args.hdf5_a, hdf5_b=args.hdf5_b, hdf5_ext=args.hdf5_ext)
+    (train_a, val_a, test_a), (train_b, val_b, test_b), ext_test = data_handler.get_tasks()
+
+    print(f"Task A - Train: {len(train_a)}, Val: {len(val_a)}, Test: {len(test_a)}")
+    print(f"Task B - Train: {len(train_b)}, Val: {len(val_b)}, Test: {len(test_b)}")
+    print(f"External Test - {len(ext_test)}")
+
+    # Get class weights for Task A
+    class_weights_a = data_handler.get_class_weights(train_a)
+    print(f"Class weights for Task A: {class_weights_a}")
+    # Get class weights for Task B
+    class_weights_b = data_handler.get_class_weights(train_b)
+    print(f"Class weights for Task B: {class_weights_b}")
+    
