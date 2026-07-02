@@ -655,7 +655,7 @@ class LatentVisualizer:
         
         #----- Plot classes and memory in a single figure
         available_labels = list(np.unique(np.concatenate((labels_A, labels_B, labels_mem))))
-        class_colors = {label: plt.cm.tab20(label) for label in available_labels}
+        class_colors = {label: plt.cm.tab20((label * 2) % 20 + ((label * 2)//20)%2) for label in available_labels} # Trick to sample one color on two if <20 classes, else other classes
         plt.figure(figsize=(10, 8))
     
         # Plot full datasets
@@ -666,7 +666,7 @@ class LatentVisualizer:
             c=[class_colors[label] for label in labels_A],
             marker='o',
             edgecolors='none',
-            alpha=0.8,
+            alpha=0.3,
             s=20,
         )
 
@@ -678,7 +678,7 @@ class LatentVisualizer:
             edgecolors=[class_colors[label] for label in labels_B],
             marker='o',
             linewidths=1.0,  # optional: adjust edge thickness
-            alpha=0.3,
+            alpha=0.8,
             s=20,
         )
         

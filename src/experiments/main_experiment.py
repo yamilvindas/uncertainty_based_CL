@@ -581,10 +581,14 @@ class CLTrainer:
         if (self.memory.capacity <= n_samples_dataloader) and (n_samples_in_memory != self.memory.capacity):
             raise RuntimeError(f"PROBLEM: the replay-memory is not full even though there are more samples in the previous task than the memory capacity (memory_capacity = {self.memory.capacity}, current number of samples in the memory: {n_samples_in_memory}, total number of samples in previous task: {n_samples_dataloader}).")
 
-    def train_single_task(self, task_name, train_loader, eval_loaders_dict, rep, save_results=True):
+    def train_single_task(self, task_name, train_loader, eval_loaders_dict, rep, save_results=True, replay_memory_only=False):
         # Update memory if necessary
         if (self.config['ContinualLearning']['Replay'].get('use_replay', False)) and (self.previous_task_data_loader is not None):
             self.update_memory(dataloader=self.previous_task_data_loader['Train'])
+            
+            if replay_memory_only:
+                print(f"\n\n==========> REPLAY MEMORY ONLY ASKED, STOPPING TRAINING TASK B.... <==========\n\n")
+                return
 
         # Activate train mode
         self.model.train()
@@ -693,7 +697,7 @@ class CLTrainer:
         return train_loader, val_loader, test_loader
 
 
-    def repeated_holdout(self, task_a_data, task_b_data, ext_test_data=None, save_results=True, n_repetitions=5):
+    def repeated_holdout(self, task_a_data, task_b_data, ext_test_data=None, save_results=True, n_repetitions=5, replay_memory_only=False):
         # Get per-task data loaders
         self.loader_A, val_A_loader, test_A_loader = self.get_data_loaders(task_a_data)
         self.loader_B, val_B_loader, test_B_loader = self.get_data_loaders(task_b_data)
@@ -780,7 +784,7 @@ class CLTrainer:
                                                 'Val': val_A_loader,
                                                 'Test': test_A_loader,
                                              }
-            self.train_single_task(self.current_task, self.loader_B, eval_loaders, rep, save_results)
+            self.train_single_task(self.current_task, self.loader_B, eval_loaders, rep, save_results, replay_memory_only=replay_memory_only)
             # Save model
             if (save_results):
                 self.save_model(self.current_task, rep)
@@ -877,11 +881,8 @@ def main():
     # Fix seed
     set_seed(seed)
     
-    # No Optuna search if only a replay of memory is asked
-    if (args['replay_memory']):
-        config['Optuna']['use_optuna'] = False
-        print("\n\n==========> Optuna search disabled as --replay-memory flag is set <==========\n\n")
-
+    # Get the replay memory flag
+    replay_memory_only = args['replay_memory']
 
     #====================================================================================================#
     #============================================ Experiment ============================================#
@@ -974,7 +975,7 @@ def main():
     # The trainer is currently loaded with the best hyperparameters
     # and a fresh model state.
     print("\n\n==========> Starting final full run with optimal configuration <==========\n")
-    trainer.repeated_holdout(task_a_data, task_b_data, ext_test_data, save_results=True, n_repetitions=config['Training'].get('n_repetitions', 5))
+    trainer.repeated_holdout(task_a_data, task_b_data, ext_test_data, save_results=not(replay_memory_only), n_repetitions=config['Training'].get('n_repetitions', 5), replay_memory_only=replay_memory_only)
 
     #====================================================================================================#
     # SAVE FINAL CONFIGURATION
