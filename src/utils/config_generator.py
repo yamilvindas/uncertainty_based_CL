@@ -95,9 +95,9 @@ def build_base_config(dataset_name, hits_data_paths=None):
                 }
 
     elif (dataset_name == "HITS"):
-        assert hits_data_paths is not None and len(hits_data_paths) == 2, \
-            "For HITS dataset, you must provide paths for both Task A and Task B HDF5 files."
-        hdf5_a, hdf5_b = hits_data_paths
+        assert hits_data_paths is not None and len(hits_data_paths) == 3, \
+            "For HITS dataset, you must provide paths for Task A, Task B, and External Test HDF5 files."
+        hdf5_a, hdf5_b, hdf5_ext = hits_data_paths
         return {
                     "exp_id": "HITS",
                     "device": "cuda:0",
@@ -118,7 +118,8 @@ def build_base_config(dataset_name, hits_data_paths=None):
                                     "dataset_type": "HITS",
                                     "num_classes": 3,
                                     "task_a_hdf5": hdf5_a,
-                                    "task_b_hdf5": hdf5_b
+                                    "task_b_hdf5": hdf5_b,
+                                    "task_ext_hdf5": hdf5_ext
                                 },
 
                     "Model": {
@@ -151,7 +152,7 @@ def write_yaml(filepath, data):
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
     print(f"Generated: {filepath}")
 
-def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_unif_ratio=True, hits_data_path_A='', hits_data_path_B=''):
+def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_unif_ratio=True, hits_data_path_A='', hits_data_path_B='', hits_data_path_EXT=None):
     # Base directories
     base_dir = "configs"
 
@@ -172,7 +173,7 @@ def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_u
         baseline_path = os.path.join(base_dir, dataset, "Baseline")
         
         # ===> No Memory Baseline <===
-        no_mem_config = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B] if dataset == "HITS" else None)
+        no_mem_config = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B, hits_data_path_EXT] if dataset == "HITS" else None)
         no_mem_config["exp_id"] = f"{dataset}_NoMemory"
         no_mem_config["ContinualLearning"]["Replay"]["use_replay"] = False
         no_mem_config["ContinualLearning"]["Replay"]["capacity"] = 0.0
@@ -183,7 +184,7 @@ def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_u
         write_yaml(os.path.join(baseline_path, "NoMemory.yaml"), no_mem_config)
         
         # ===> EWC Only Baseline <===
-        ewc_config = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B] if dataset == "HITS" else None)
+        ewc_config = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B, hits_data_path_EXT] if dataset == "HITS" else None)
         ewc_config["exp_id"] = f"{dataset}_EWC"
         ewc_config["ContinualLearning"]["Replay"]["use_replay"] = False
         ewc_config["ContinualLearning"]["Replay"]["capacity"] = 0.0
@@ -206,7 +207,7 @@ def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_u
                 mem_select_strategies = ['uniform', 'uncertainty', 'uncertainty-by-class', 'loss', 'dissimilarity', 'hybrid']
             for mem_strategy in mem_select_strategies:
                 # ===> Replay Only <===
-                replay_only = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B] if dataset == "HITS" else None)
+                replay_only = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B, hits_data_path_EXT] if dataset == "HITS" else None)
                 replay_only["exp_id"] = f"{dataset}_{mem_folder}_Replay"
                 replay_only["ContinualLearning"]["Replay"]["use_replay"] = True
                 replay_only["ContinualLearning"]["Replay"]["capacity"] = capacity_ratio
@@ -239,7 +240,7 @@ def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_u
                 
                 # ===> Replay with EWC <===
                 if (generate_EWC_Replay_combination):
-                    replay_ewc = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B] if dataset == "HITS" else None)
+                    replay_ewc = build_base_config(dataset, hits_data_paths=[hits_data_path_A, hits_data_path_B, hits_data_path_EXT] if dataset == "HITS" else None)
                     replay_ewc["exp_id"] = f"{dataset}_{mem_folder}_ReplayEWC"
                     replay_ewc["ContinualLearning"]["Replay"]["use_replay"] = True
                     replay_ewc["ContinualLearning"]["Replay"]["capacity"] = capacity_ratio
@@ -279,6 +280,7 @@ if __name__ == "__main__":
     # Add the arguments to the parser
     ap.add_argument('--HITS-data-path-A', default='', help="Path to the HITS dataset (default: empty string)")
     ap.add_argument('--HITS-data-path-B', default='', help="Path to the second HITS dataset (default: empty string)")
+    ap.add_argument('--HITS-data-path-EXT', default='', help="Path to the external test HITS dataset (default: empty string)")
     ap.add_argument('--generate_EWC_Replay_combination', help="Use if also want to generate the YAML files for the experiments combining EWC and Replay-based CL", action='store_true')
     ap.add_argument('--generate_optuna_unif_ratio', help="Use if also want to generate the YAML files for fixed uniform ratios (for loss and uncertainty-based experiments)", action='store_true')
     args = vars(ap.parse_args())
@@ -286,6 +288,7 @@ if __name__ == "__main__":
     # Getting the value of the arguments
     hits_data_path_A = args['HITS_data_path_A']
     hits_data_path_B = args['HITS_data_path_B']
+    hits_data_path_EXT = args['HITS_data_path_EXT']
     generate_EWC_Replay_combination = args['generate_EWC_Replay_combination']
     generate_optuna_unif_ratio = args['generate_optuna_unif_ratio']
 
@@ -296,6 +299,7 @@ if __name__ == "__main__":
                             generate_EWC_Replay_combination=generate_EWC_Replay_combination,
                             generate_optuna_unif_ratio=generate_optuna_unif_ratio,
                             hits_data_path_A=hits_data_path_A,
-                            hits_data_path_B=hits_data_path_B
+                            hits_data_path_B=hits_data_path_B,
+                            hits_data_path_EXT=hits_data_path_EXT if len(hits_data_path_EXT) > 0 else None
                         )
     print("\n\n=======> All configuration folders and files have been successfully generated! <=======\n\n")

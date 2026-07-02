@@ -58,7 +58,7 @@ If you also want to generate configuration files that explicitly combine EWC wit
 `python src/utils/config_generator.py --generate_EWC_Replay_combination`
 
 If you want to use a HITS dataset, you need to specify the paths to the hdf5 files describing the splits:
-`python src/utils/config_generator.py --HITS-data-path-A path/to/data_A.hdf5 --HITS-data-path-B path/to/data_B.hdf5`
+`python src/utils/config_generator.py --HITS-data-path-A path/to/data_A.hdf5 --HITS-data-path-B path/to/data_B.hdf5 --HITS-data-path-EXT path/to/data_ext.hdf5`
 
 ### **B. Launch Experiments**
 

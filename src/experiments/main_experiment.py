@@ -905,10 +905,10 @@ def main():
         data_handler = HITSHandler(
                                         batch_size=batch_size,
                                         hdf5_a=config['Dataset']['task_a_hdf5'],
-                                        hdf5_b=config['Dataset']['task_b_hdf5']
+                                        hdf5_b=config['Dataset']['task_b_hdf5'],
+                                        hdf5_ext=config['Dataset']['task_ext_hdf5'] if 'task_ext_hdf5' in config['Dataset'] else None,
                                     )
-        task_a_data, task_b_data = data_handler.get_tasks()
-        ext_test_data = None
+        task_a_data, task_b_data, ext_test_data = data_handler.get_tasks()
 
     else:
         raise ValueError(f"Dataset type {dataset_type} not valid.")
