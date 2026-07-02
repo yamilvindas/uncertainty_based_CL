@@ -31,11 +31,11 @@ class OrganMNISTHandler(DataHandler):
     #----- Class attributes and methods -----
     IDX_TO_CLASS = None
     
-    
-    def load_class_mapping(self):
-        if OrganMNISTHandler.IDX_TO_CLASS is None:
+    @classmethod
+    def load_class_mapping(cls):
+        if cls.IDX_TO_CLASS is None:
             info = INFO['organamnist']
-            OrganMNISTHandler.IDX_TO_CLASS = {int(i): class_name for i, class_name in info['label'].items()}
+            cls.IDX_TO_CLASS = {int(i): class_name for i, class_name in info['label'].items()}
     
     #----- Instance attributes and methods -----
     def __init__(self, batch_size, lite=True):
