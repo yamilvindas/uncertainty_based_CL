@@ -864,6 +864,7 @@ def main():
     # Add the arguments to the parser
     ap.add_argument('--parameters_file', required=True, help="Yaml parameters for the experiment", type=str)
     ap.add_argument('--seed', default=42, help="Seed to use for the experiment", type=int)
+    ap.add_argument('--replay-memory', action='store_true', help="Only replay the memory but does not evaluate the full dataset", default=False)
     args = vars(ap.parse_args())
 
     # Getting the value of the arguments
@@ -875,6 +876,11 @@ def main():
 
     # Fix seed
     set_seed(seed)
+    
+    # No Optuna search if only a replay is asked
+    if (args['replay_memory']):
+        config['Optuna']['use_optuna'] = False
+        print("\n\n==========> Optuna search disabled as --replay-memory flag is set <==========\n\n")
 
 
     #====================================================================================================#
