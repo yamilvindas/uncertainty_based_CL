@@ -12,18 +12,18 @@ The framework is evaluated across three primary datasets:
 We recommend using a virtual environment to manage dependencies cleanly.
 
 1. **Create the virtual environment:**  
-   python \-m venv .venv
+   `python -m venv .venv`
 
 2. **Activate the environment:**  
    * *Linux/macOS:*  
-     source .venv/bin/activate
+     `source .venv/bin/activate`
 
    * *Windows:*  
-     .venv\\Scripts\\activate
+     `.venv\\Scripts\\activate`
 
 3. **Install the requirements:**  
-   python \-m pip install \--upgrade pip  
-   pip install \-r requirements.txt
+   `python -m pip install --upgrade pip`
+   `pip install -r requirements.txt`
 
 ## **II. Code Structure**
 
@@ -52,19 +52,21 @@ The repository is organized into three main directories: src/, configs/, and exe
 ### **A. (Re-)Generate Configuration Files**
 
 Before running experiments, generate the hierarchical configuration files for OrganMNIST and Camelyon17:  
-python src/utils/config\_generator.py
+`python src/utils/config_generator.py`
 
 If you also want to generate configuration files that explicitly combine EWC with replay-based CL, append the flag:  
-python src/utils/config\_generator.py \--generate\_EWC\_Replay\_combination
+`python src/utils/config_generator.py --generate_EWC_Replay_combination`
 
 If you want to use a HITS dataset, you need to specify the paths to the hdf5 files describing the splits:
-python src/utils/config\_generator.py --HITS-data-path-A path/to/data_A.hdf5 --HITS-data-path-B path/to/data_B.hdf5
+`python src/utils/config_generator.py --HITS-data-path-A path/to/data_A.hdf5 --HITS-data-path-B path/to/data_B.hdf5`
 
 ### **B. Launch Experiments**
 
 **To launch a single, isolated experiment:**  
 Pass the target configuration YAML directly to the main script:  
-python src/experiments/main\_experiment.py \--parameters\_file configs/OrganMNIST/Baseline/EWC.yaml
+`python src/experiments/main_experiment.py --parameters_file configs/OrganMNIST/Baseline/EWC.yaml`
+
+*Note:* If you want to simulate only a memory draw and generate corresponding figures and csv, you can add the argument `--replay-memory`
 
 Each completed experiment generates a structured folder inside ./results/EXP-ID/, containing:
 
@@ -76,11 +78,11 @@ Each completed experiment generates a structured folder inside ./results/EXP-ID/
 
 **To run all experiments sequentially (Batch Mode):**  
 Use the provided bash runner. It includes a resume feature, meaning if the process is interrupted, re-running the command will skip completed experiments and pick up right where it left off.  
-bash exec\_files/experiment\_runner.bash
+`bash exec_files/experiment_runner.bash`
 
 ### **C. Analyze Results**
 
 You can compute the mean, standard deviation, and quantify catastrophic forgetting statistics for any completed experiment using the analysis utility:  
-python src/utils/analyze\_results.py results/EXP-RESULTS-FOLDER/metrics/predictions_i.h5
+`python src/utils/analyze_results.py results/EXP-RESULTS-FOLDER/metrics/predictions_i.h5`
 
 *(Note: Ensure you point the script to the actual .h5 file generated in your results directory).*
