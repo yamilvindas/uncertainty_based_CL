@@ -713,7 +713,7 @@ class CLTrainer:
         # Dictionary to aggregate results across multiple repetitions
         metrics_summary = {'Val_Task_A': [], 'Val_Task_B': [], 'Test_Task_A': [], 'Test_Task_B': []}
         if (ext_test_data):
-            metrics_summary['Ext_Test'] = []
+            metrics_summary['External_Test'] = []
 
         for rep in range(n_repetitions):
             if (save_results):
@@ -877,7 +877,7 @@ def main():
     # Fix seed
     set_seed(seed)
     
-    # No Optuna search if only a replay is asked
+    # No Optuna search if only a replay of memory is asked
     if (args['replay_memory']):
         config['Optuna']['use_optuna'] = False
         print("\n\n==========> Optuna search disabled as --replay-memory flag is set <==========\n\n")
