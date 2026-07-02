@@ -20,7 +20,10 @@ class DataHandler:
         ])
 
     def get_class_weights(self, dataset):
-        labels = [y for _, y in dataset]
+        if len(dataset[0]) == 2:
+            labels = [y for _, y in dataset]
+        else:
+            labels = [y for _, y, _ in dataset]
         labels = np.array(labels).flatten()
         class_counts = np.bincount(labels)
         total = len(labels)
@@ -81,4 +84,23 @@ class OrganMNISTHandler(DataHandler):
         print(f"\n\n===> Total number of TRAIN samples for ALL tasks: {self.n_all_train_samples}\n")
 
         return (task_a_train, task_a_val, task_a_test), (task_b_train, task_b_val, task_b_test)
+
+
+
+#---------- Analyzing resulting dataset --------------------
+if __name__ == "__main__":
+    # Example usage
+    batch_size = 32
+    data_handler = OrganMNISTHandler(batch_size, lite=True)
+    (train_a, val_a, test_a), (train_b, val_b, test_b) = data_handler.get_tasks()
+
+    print(f"Task A - Train: {len(train_a)}, Val: {len(val_a)}, Test: {len(test_a)}")
+    print(f"Task B - Train: {len(train_b)}, Val: {len(val_b)}, Test: {len(test_b)}")
+
+    # Get class weights for Task A
+    class_weights_a = data_handler.get_class_weights(train_a)
+    print(f"Class weights for Task A: {class_weights_a}")
+    # Get class weights for Task B
+    class_weights_b = data_handler.get_class_weights(train_b)
+    print(f"Class weights for Task B: {class_weights_b}")
     

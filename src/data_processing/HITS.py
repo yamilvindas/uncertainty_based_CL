@@ -23,8 +23,6 @@ import sys
 from collections import Counter
 
 import h5py
-import numpy as np
-import torch
 import torchvision.transforms as transforms
 from PIL import Image
 from torch.utils.data import Dataset, Subset
@@ -245,3 +243,32 @@ class HITSHandler(DataHandler):
 
         return (task_a_train, task_a_val, task_a_test), \
                (task_b_train, task_b_val, task_b_test)
+
+#---------- Analyzing resulting dataset --------------------
+if __name__ == "__main__":
+    import argparse
+    arg_parser = argparse.ArgumentParser(description="HITS Dataset Handler Test")
+    arg_parser.add_argument("--hdf5_a", type=str, required=True,
+                            help="Path to Task A HDF5 file")
+    arg_parser.add_argument("--hdf5_b", type=str, required=True,
+                            help="Path to Task B HDF5 file")
+    args = arg_parser.parse_args()
+    
+    print(args.hdf5_a)
+    print(args.hdf5_b)
+    
+    # Example usage
+    batch_size = 32
+    data_handler = HITSHandler(batch_size=batch_size, hdf5_a=args.hdf5_a, hdf5_b=args.hdf5_b)
+    (train_a, val_a, test_a), (train_b, val_b, test_b) = data_handler.get_tasks()
+
+    print(f"Task A - Train: {len(train_a)}, Val: {len(val_a)}, Test: {len(test_a)}")
+    print(f"Task B - Train: {len(train_b)}, Val: {len(val_b)}, Test: {len(test_b)}")
+
+    # Get class weights for Task A
+    class_weights_a = data_handler.get_class_weights(train_a)
+    print(f"Class weights for Task A: {class_weights_a}")
+    # Get class weights for Task B
+    class_weights_b = data_handler.get_class_weights(train_b)
+    print(f"Class weights for Task B: {class_weights_b}")
+    

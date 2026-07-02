@@ -318,7 +318,7 @@ class CLTrainer:
         is_continual = (self.config['ContinualLearning']['Replay'].get('use_replay', False)) or (self.config['ContinualLearning']['EWC'].get('use_ewc', False))
         if (is_continual) and (self.current_task.lower() == 'task_a'):
             # In this case we do not optimiye the model for task A
-            print(f"\n\n==========> IGNORING OPTUNA OPTIMIZATION FOR TASK A AS WE HAVE A CONTINUAL LEARNING EPXERIMENT (USING BASELINE OPTUNA RESULTS)\n\n")
+            print(f"\n\n==========> IGNORING OPTUNA OPTIMIZATION FOR TASK A AS WE HAVE A CONTINUAL LEARNING EXPERIMENT (USING BASELINE OPTUNA RESULTS)\n\n")
             pass
         else:       
             # Define the SQLite database path inside the results folder
