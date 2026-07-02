@@ -32,7 +32,7 @@ class OrganMNISTHandler(DataHandler):
     IDX_TO_CLASS = None
     
     
-    def load_class_mapping():
+    def load_class_mapping(self):
         if OrganMNISTHandler.IDX_TO_CLASS is None:
             info = INFO['organamnist']
             OrganMNISTHandler.IDX_TO_CLASS = {int(i): class_name for i, class_name in info['label'].items()}

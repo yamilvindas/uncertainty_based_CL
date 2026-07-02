@@ -11,9 +11,9 @@ import torch
 from sklearn.manifold import TSNE
 from torch.utils.data import DataLoader, Dataset
 
-from data_processing.Camelyon17 import CamelyonHandler
-from data_processing.HITS import HITSDataset
-from data_processing.OrganMNIST import OrganMNISTHandler
+from src.data_processing.Camelyon17 import CamelyonHandler
+from src.data_processing.HITS import HITSDataset
+from src.data_processing.OrganMNIST import OrganMNISTHandler
 
 
 class MemoryBuffer:
