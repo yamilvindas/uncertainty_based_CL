@@ -36,10 +36,11 @@ from src.models.timefreq2dcnn import TimeFreq2DCNNModel
 
 
 class CLTrainer:
-    def __init__(self, config):
+    def __init__(self, config, inference_mode=False):
         # Main config
         self.config = config
         self.use_optuna = self.config["Optuna"].get('use_optuna', True)
+        self.inference_mode = inference_mode
 
         # Device for computations
         self.device = torch.device(self.config.get("device", 'cuda:0'))
@@ -72,6 +73,8 @@ class CLTrainer:
         # Setup Directories & Files
         self.base_results_dir = Path(self.config['results_dir'])
         self.res_dir = self.base_results_dir / self.exp_id
+        if self.inference_mode:
+            self.res_dir = self.res_dir / "infer"
         self.models_dir = self.res_dir / "models"
         self.models_dir.mkdir(parents=True, exist_ok=True)
         self.metrics_dir = self.res_dir / "metrics"
@@ -83,6 +86,7 @@ class CLTrainer:
         while (os.path.exists(self.metrics_dir / f"predictions_{i}.h5")):
             i += 1
         self.h5_path = self.metrics_dir / f"predictions_{i}.h5"
+        print(f"Predictions will be saved to: {self.h5_path}")
         
         # Initialize an empty HDF5 file
         with h5py.File(self.h5_path, 'w') as f:
