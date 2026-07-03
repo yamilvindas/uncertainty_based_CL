@@ -50,14 +50,22 @@ def parse_h5_file(h5_path):
                                 'Final_Acc_Task_B': [],
                                 'Forgetting_Acc_Task_A': [],
                                 'BWT_Acc_Task_A': [],
+                                'First_Acc_ext_test': [],
+                                'Final_Acc_ext_test': [],
+
                                 'Final_BalAcc_Task_A': [],
                                 'Final_BalAcc_Task_B': [],
                                 'Forgetting_BalAcc_Task_A': [],
                                 'BWT_BalAcc_Task_A': [],
+                                'First_BalAcc_ext_test': [],
+                                'Final_BalAcc_ext_test': [],
+
                                 'Final_MCC_Task_A': [],
                                 'Final_MCC_Task_B': [],
                                 'Forgetting_MCC_Task_A': [],
-                                'BWT_MCC_Task_A': []
+                                'BWT_MCC_Task_A': [],
+                                'First_MCC_ext_test': [],
+                                'Final_MCC_ext_test': []
                             }
             
             for rep_key in rep_keys:
@@ -89,12 +97,30 @@ def parse_h5_file(h5_path):
                 preds_B = post_B_group['Test_Task_B']['preds'][:]
                 metrics_B = calculate_metrics(targets_B, preds_B)
                 
+                # External after task A
+                has_ext = False
+                if 'External_Test' in post_A_group:
+                    targets_ext = post_A_group['External_Test']['targets'][:]
+                    preds_ext = post_A_group['External_Test']['preds'][:]
+                    metrics_ext_A = calculate_metrics(targets_ext, preds_ext)
+                    has_ext = True
+
+                # External after task B
+                if 'External_Test' in post_B_group:
+                    targets_ext_B = post_B_group['External_Test']['targets'][:]
+                    preds_ext_B = post_B_group['External_Test']['preds'][:]
+                    metrics_ext_B = calculate_metrics(targets_ext_B, preds_ext_B)
+                    has_ext = has_ext and True
+
                 # Accuracy metrics
                 for metrics_name in ['Acc', 'BalAcc', 'MCC']:
                     metrics_storage[f'Final_{metrics_name}_Task_A'].append(metrics_B_A[metrics_name])
                     metrics_storage[f'Final_{metrics_name}_Task_B'].append(metrics_B[metrics_name])
                     metrics_storage[f'Forgetting_{metrics_name}_Task_A'].append(metrics_A[metrics_name] - metrics_B_A[metrics_name])
                     metrics_storage[f'BWT_{metrics_name}_Task_A'].append(metrics_B_A[metrics_name] - metrics_A[metrics_name])
+                    if has_ext:
+                        metrics_storage[f'First_{metrics_name}_ext_test'].append(metrics_ext_A[metrics_name])
+                        metrics_storage[f'Final_{metrics_name}_ext_test'].append(metrics_ext_B[metrics_name])
 
             # Calculate Means and Stds
             for k, v in metrics_storage.items():
@@ -158,13 +184,17 @@ def extract_metadata(folder_name):
 # -------------------------------------------------------------------------
 # 2. MAIN REPORT GENERATION
 # -------------------------------------------------------------------------
-def generate_reports(metrics_to_show=['Acc', 'BalAcc', 'MCC'], results_dir="./results", output_dir="./report"):
+def generate_reports(metrics_to_show=['Acc', 'BalAcc', 'MCC'], results_dir="./results", output_dir="./report", inference_mode=False):
     """
         Generated with Gemini 3.1 Pro
     """
     os.makedirs(output_dir, exist_ok=True)
-    
-    h5_files = glob.glob(os.path.join(results_dir, "*", "metrics", "predictions*.h5"))
+
+    if inference_mode:
+        h5_files = glob.glob(os.path.join(results_dir, "*", "infer", "metrics", "predictions*.h5"))
+        print(f"[INFO] Inference mode enabled. Looking for results in: {results_dir}")
+    else:
+        h5_files = glob.glob(os.path.join(results_dir, "*", "metrics", "predictions*.h5"))
     if not h5_files:
         print(f"No predictions.h5 files found in {results_dir}")
         return
@@ -173,7 +203,11 @@ def generate_reports(metrics_to_show=['Acc', 'BalAcc', 'MCC'], results_dir="./re
 
     # Process all files
     for h5_path in h5_files:
-        exp_folder = os.path.basename(os.path.dirname(os.path.dirname(h5_path)))
+        if inference_mode:
+            exp_folder = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(h5_path))))
+        else:
+            exp_folder = os.path.basename(os.path.dirname(os.path.dirname(h5_path)))
+        print(f"Processing: {h5_path} (Experiment: {exp_folder})")
         dataset, approach, group, capacity, is_ewc = extract_metadata(exp_folder)
         
         metrics = parse_h5_file(h5_path)
@@ -187,7 +221,8 @@ def generate_reports(metrics_to_show=['Acc', 'BalAcc', 'MCC'], results_dir="./re
                 **metrics
             }
             data.append(row)
-            
+    
+    has_ext =  sum(['ext' in k for k in data[0].keys()]) > 0 if data else False
     df = pd.DataFrame(data)
     if df.empty:
         print("No valid data could be parsed.")
@@ -215,13 +250,25 @@ def generate_reports(metrics_to_show=['Acc', 'BalAcc', 'MCC'], results_dir="./re
         
         column_names = []
         for m in metrics_to_show:
-            column_names.extend([
-                f"{METRIC_TABLE_NAME[m]} Task A (\\%)",
-                f"{METRIC_TABLE_NAME[m]} Task B (\\%)",
-                f"Forgetting {METRIC_TABLE_NAME[m]} (\\%)"
-            ])
+            if has_ext:
+                column_names.extend([
+                    f"{METRIC_TABLE_NAME[m]} Task A (\\%)",
+                    f"{METRIC_TABLE_NAME[m]} Task B (\\%)",
+                    f"Forgetting {METRIC_TABLE_NAME[m]} (\\%)",
+                    f"First {METRIC_TABLE_NAME[m]} Ext. Test (\\%)",
+                    f"Final {METRIC_TABLE_NAME[m]} Ext. Test (\\%)"
+                ])
+            else:
+                column_names.extend([
+                    f"{METRIC_TABLE_NAME[m]} Task A (\\%)",
+                    f"{METRIC_TABLE_NAME[m]} Task B (\\%)",
+                    f"Forgetting {METRIC_TABLE_NAME[m]} (\\%)",
+                ])
         column_line = "} & \\textbf{".join(column_names)
-        tabular_align = "ll" + "ccc" * len(metrics_to_show)
+        if has_ext:
+            tabular_align = "ll" + "ccccc" * len(metrics_to_show)
+        else:
+            tabular_align = "ll" + "ccc" * len(metrics_to_show)
         
         latex_lines = [
             "\\begin{table*}[t]",
@@ -255,7 +302,12 @@ def generate_reports(metrics_to_show=['Acc', 'BalAcc', 'MCC'], results_dir="./re
                 metric_a = format_mean_std(row, f'Final_{m}_Task_A')
                 metric_b = format_mean_std(row, f'Final_{m}_Task_B')
                 forgetting = format_mean_std(row, f'Forgetting_{m}_Task_A')
-                metric_line += f"& ${metric_a}$ & ${metric_b}$ & ${forgetting}$ "
+                if has_ext:
+                    first_ext = format_mean_std(row, f'First_{m}_ext_test')
+                    final_ext = format_mean_std(row, f'Final_{m}_ext_test')
+                    metric_line += f"& ${metric_a}$ & ${metric_b}$ & ${forgetting}$ & ${first_ext}$ & ${final_ext}$ "
+                else:
+                    metric_line += f"& ${metric_a}$ & ${metric_b}$ & ${forgetting}$ "
             metric_line += "\\\\"
             
             latex_lines.append(metric_line)
@@ -470,6 +522,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Generate reports from H5 prediction files.")
     parser.add_argument('--m_to_show', help='Metrics to include in the LaTeX table', nargs='+', default=['Acc', 'BalAcc', 'MCC'])
+    parser.add_argument('--inference_mode', help='Generate reports for inference mode', action='store_true')
     args = parser.parse_args()
     
     metrics_to_show = args.m_to_show
@@ -478,4 +531,4 @@ if __name__ == "__main__":
             print(f"[ERROR] Invalid metric '{m}' specified. Valid options are: {list(METRIC_TABLE_NAME.keys())}")
             exit(1)
 
-    generate_reports(metrics_to_show=metrics_to_show)
+    generate_reports(metrics_to_show=metrics_to_show, inference_mode=args.inference_mode)
