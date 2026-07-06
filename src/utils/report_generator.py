@@ -128,8 +128,9 @@ def parse_h5_file(h5_path):
                     results[f"{k}_Mean"] = np.mean(v)
                     results[f"{k}_Std"] = np.std(v)
                 else:
-                    print(f"[ERROR] No valid data for {h5_path}: {k} has no values.")
-                    return None
+                    #print(f"[ERROR] No valid data for {h5_path}: {k} has no values.")
+                    print(f"[WARNING] No valid data for {h5_path}: {k} has no values.")
+                    #return None
             return results
     except Exception as e:
         print(f"[ERROR] Error parsing {h5_path}: {e}")
