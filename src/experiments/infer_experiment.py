@@ -183,6 +183,10 @@ def main():
 
     else:
         raise ValueError(f"Dataset type {dataset_type} not valid.")
+    #====================================================================================================#
+    # Define number of possible samples in the memory (not used at inference, but necessary to have it in the configuration for the CLTester to work properly)
+    mem_capacity_samples = int(config['ContinualLearning']['Replay']['capacity']*data_handler.n_all_train_samples)
+    config['ContinualLearning']['Replay']['capacity_in_n_samples'] = mem_capacity_samples
 
     #====================================================================================================#
     # Initialize Tester (Model is created internally based on YAML)
