@@ -524,6 +524,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate reports from H5 prediction files.")
     parser.add_argument('--m_to_show', help='Metrics to include in the LaTeX table', nargs='+', default=['Acc', 'BalAcc', 'MCC'])
     parser.add_argument('--inference_mode', help='Generate reports for inference mode', action='store_true')
+    parser.add_argument('--results_dir', help='Directory containing the results files', default='./results')
     args = parser.parse_args()
     
     metrics_to_show = args.m_to_show
@@ -532,4 +533,4 @@ if __name__ == "__main__":
             print(f"[ERROR] Invalid metric '{m}' specified. Valid options are: {list(METRIC_TABLE_NAME.keys())}")
             exit(1)
 
-    generate_reports(metrics_to_show=metrics_to_show, inference_mode=args.inference_mode)
+    generate_reports(metrics_to_show=metrics_to_show, inference_mode=args.inference_mode, results_dir=args.results_dir)
