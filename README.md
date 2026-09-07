@@ -1,6 +1,9 @@
 # **Uncertainty-Based Replay Continual Learning for Medical Imaging**
 
-This repository implements an advanced uncertainty-based sample selection strategy for replay-based Continual Learning (CL) in medical imaging.  
+This repository contains the implementation of an uncertainty-based sample selection strategy for replay-based Continual Learning (CL) in medical imaging, as presented in our paper accepted at the CLiMeM Workshop at MICCAI 2026.
+
+Paper: https://openreview.net/forum?id=LSx4EI3xs8
+
 The framework is evaluated across three primary datasets:
 
 1. **OrganMNIST** (Public)  
