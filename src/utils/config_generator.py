@@ -160,11 +160,19 @@ def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_u
     datasets = ["Camelyon17", "OrganMNIST", "HITS"]
     
     # Memory configurations with their respective capacity ratios
+
     mem_configs = {
                         "Mem-1": 0.01,
                         "Mem-5": 0.05,
                         "Mem-10": 0.10,
+                        "Mem-20": 0.20,
+                        "Mem-30": 0.30,
+                        "Mem-40": 0.40,
                         "Mem-50": 0.50,
+                        "Mem-60": 0.60,
+                        "Mem-70": 0.70,
+                        "Mem-80": 0.80,
+                        "Mem-90": 0.90,
                         "Mem-100": 1.00
                     }
     
@@ -255,6 +263,7 @@ def generate_all_configs(generate_EWC_Replay_combination=True, generate_optuna_u
                         replay_ewc['ContinualLearning']['Replay']['alea_drop_fraction'] = 0.15
                         #replay_ewc['ContinualLearning']['Replay']['mc_passes'] = 10
                         replay_ewc['ContinualLearning']['Replay']['mc_passes'] = 20
+                        replay_ewc['ContinualLearning']['Replay']['by_class'] = (mem_strategy.lower() == 'uncertainty-by-class')
                         if (mem_strategy.lower() == 'hybrid'):
                             replay_ewc['ContinualLearning']['Replay']['wl'] = 1.0
                             replay_ewc['ContinualLearning']['Replay']['pool_multiplier'] = 3
