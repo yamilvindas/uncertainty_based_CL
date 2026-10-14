@@ -4,6 +4,7 @@
     experiments for healthcare
 """
 import argparse
+import json
 import os
 import random
 import sys
@@ -585,6 +586,133 @@ class CLTrainer:
         if (self.memory.capacity <= n_samples_dataloader) and (n_samples_in_memory != self.memory.capacity):
             raise RuntimeError(f"PROBLEM: the replay-memory is not full even though there are more samples in the previous task than the memory capacity (memory_capacity = {self.memory.capacity}, current number of samples in the memory: {n_samples_in_memory}, total number of samples in previous task: {n_samples_dataloader}).")
 
+    # =====================================================================
+    # Quantitative buffer statistics, computed alongside the
+    # existing qualitative t-SNE visualization (LatentVisualizer), using
+    # the same feature space (self.model at the point the visualization
+    # is triggered) so the numbers are directly comparable to the plot --
+    # not a separate reconstruction, this uses the actual buffer built
+    # during this training run (self.memory.buffer_x / buffer_y).
+    # =====================================================================
+    def _get_loader_class_distribution(self, loader):
+        """Class distribution (count, percentage) from a DataLoader, without calling the model."""
+        all_targets = []
+        for batch in loader:
+            if self.config['Dataset'].get('dataset_type', 'OrganMNIST') == "Camelyon17":
+                _, targets, _ = batch
+            else:
+                _, targets = batch
+            if isinstance(targets, (tuple, list)):
+                targets = targets[0]
+            all_targets.extend(targets.cpu().numpy())
+        all_targets = np.array([int(t) for t in all_targets])
+        unique, counts = np.unique(all_targets, return_counts=True)
+        total = len(all_targets)
+        return {int(c): {"count": int(n), "pct": float(100.0 * n / total)} for c, n in zip(unique, counts)}
+
+    def _compute_buffer_quantification(self, rep, test_A_loader, test_B_loader):
+        """Quantify the replay buffer's class composition, representativeness, and feature-space characteristics.
+
+        Computes per-class sample counts and percentages in the replay buffer and
+        compares them with the original Task A training-set distribution. Extracts
+        features for buffer samples and Task A/Task B test samples to measure the
+        buffer's mean and standard deviation of distances to each task's feature
+        centroid, as well as its mean pairwise feature distance as a measure of
+        diversity. Pairwise distances are computed on a random subsample when the
+        buffer exceeds 500 samples to limit computational cost.
+
+        Saves the resulting statistics as a JSON file and returns them. Returns
+        None if the replay buffer is absent or empty.
+
+        Args:
+            rep: Repetition identifier used to label the results and output file.
+            test_A_loader: DataLoader providing Task A test samples.
+            test_B_loader: DataLoader providing Task B test samples.
+
+        Returns:
+            dict or None: Quantification statistics, including buffer capacity and
+            achieved size, class distribution and its deviation from the original
+            Task A training distribution, distances to task-specific feature
+            centroids, and mean pairwise feature distance. Returns None if the
+            replay buffer is empty or unavailable.
+        """
+        if self.memory is None or len(self.memory.buffer_x) == 0:
+            return None
+
+        self.model.eval()
+        with torch.no_grad():
+            buffer_x = torch.stack(self.memory.buffer_x).to(self.device)
+            buffer_y = np.array([int(y) for y in self.memory.buffer_y])
+            buffer_feats = self.model.extract_features(buffer_x).cpu().numpy()
+
+            def _extract_all(loader):
+                feats = []
+                for batch in loader:
+                    if len(batch) == 2:
+                        x, _y = batch
+                    else:
+                        x, _y, *_ = batch
+                    f = self.model.extract_features(x.to(self.device))
+                    feats.append(f.cpu().numpy())
+                return np.concatenate(feats)
+
+            taskA_feats = _extract_all(test_A_loader)
+            taskB_feats = _extract_all(test_B_loader)
+
+        # Per-class buffer composition
+        target_capacity = self.config['ContinualLearning']['Replay']['capacity_in_n_samples']
+        unique_classes, class_counts = np.unique(buffer_y, return_counts=True)
+        class_distribution = {
+            int(c): {"count": int(n), "pct": float(100.0 * n / len(buffer_y))}
+            for c, n in zip(unique_classes, class_counts)
+        }
+
+        # Compare the buffer composition to the original class distribution in the training set for Task A
+        original_distribution = self._get_loader_class_distribution(self.loader_A)
+        for c, stats in class_distribution.items():
+            orig_pct = original_distribution.get(c, {}).get("pct", 0.0)
+            stats["original_train_pct"] = orig_pct
+            stats["pct_delta"] = stats["pct"] - orig_pct
+            stats["representation_ratio"] = (stats["pct"] / orig_pct) if orig_pct > 0 else None
+
+        # Distance of buffer samples to Task A / Task B test centroids
+        centroid_A = taskA_feats.mean(axis=0)
+        centroid_B = taskB_feats.mean(axis=0)
+        dist_to_A = np.linalg.norm(buffer_feats - centroid_A, axis=1)
+        dist_to_B = np.linalg.norm(buffer_feats - centroid_B, axis=1)
+
+        # Buffer diversity: mean pairwise distance (subsample if large)
+        max_pairwise_n = 500
+        if len(buffer_feats) > max_pairwise_n:
+            idx = np.random.choice(len(buffer_feats), max_pairwise_n, replace=False)
+            sub_feats = buffer_feats[idx]
+        else:
+            sub_feats = buffer_feats
+        pairwise_dists = np.linalg.norm(sub_feats[:, None, :] - sub_feats[None, :, :], axis=-1)
+        iu = np.triu_indices(len(sub_feats), k=1)
+        mean_pairwise_dist = float(pairwise_dists[iu].mean()) if len(iu[0]) > 0 else 0.0
+
+        quant_stats = {
+            "repetition": rep,
+            "target_capacity": int(target_capacity),
+            "achieved_buffer_size": int(len(buffer_y)),
+            "class_distribution": class_distribution,
+            "mean_distance_to_task_A_centroid": float(dist_to_A.mean()),
+            "std_distance_to_task_A_centroid": float(dist_to_A.std()),
+            "mean_distance_to_task_B_centroid": float(dist_to_B.mean()),
+            "std_distance_to_task_B_centroid": float(dist_to_B.std()),
+            "buffer_diversity_mean_pairwise_distance": mean_pairwise_dist,
+        }
+
+        quant_path = self.memories_dir / f"Memory-{rep}_class_distribution.json"
+        with open(quant_path, 'w') as f:
+            json.dump(quant_stats, f, indent=4)
+        print(f"[INFO] Buffer quantification saved to: {quant_path}")
+        print(json.dumps(quant_stats, indent=2))
+
+        return quant_stats
+
+
     def train_single_task(self, task_name, train_loader, eval_loaders_dict, rep, save_results=True, replay_memory_only=False):
         # Update memory if necessary
         if (self.config['ContinualLearning']['Replay'].get('use_replay', False)) and (self.previous_task_data_loader is not None):
@@ -723,6 +851,9 @@ class CLTrainer:
         if (ext_test_data):
             metrics_summary['External_Test'] = []
 
+        # collect buffer quantification stats across repetitions
+        all_quant_stats = []
+
         for rep in range(n_repetitions):
             if (save_results):
                 print(f"\n======================================")
@@ -822,6 +953,14 @@ class CLTrainer:
                 visualizer = LatentVisualizer(self.model, device, dataset_name=self.config['Dataset'].get('dataset_type', None))
                 visualizer.plot_memory_representation(self.loader_A, self.loader_B, self.memory, save_path=memories_fig_path)
 
+                # Quantitative buffer statistics, computed right
+                # alongside the qualitative t-SNE plot above, using the
+                # same model/feature space and the actual buffer built
+                # during this training run.
+                quant_stats = self._compute_buffer_quantification(rep, test_A_loader, test_B_loader)
+                if quant_stats is not None:
+                    all_quant_stats.append(quant_stats)
+
         # Compute Mean and Standard Deviation
         final_means = {}
         if (save_results):
@@ -835,7 +974,34 @@ class CLTrainer:
             final_means[metric] = mean_val
             if save_results:
                 print(f"\n\n==========> {metric}: {mean_val:.4f} ± {std_val:.4f}")
-                
+
+        # Aggregate buffer quantification stats across repetitions
+        # (mean +/- std for the scalar metrics; class distribution averaged
+        # per class) and save alongside the per-repetition JSON files.
+        if len(all_quant_stats) > 0:
+            agg = {
+                "n_repetitions_with_buffer": len(all_quant_stats),
+                "achieved_buffer_size_mean": float(np.mean([s["achieved_buffer_size"] for s in all_quant_stats])),
+                "achieved_buffer_size_std": float(np.std([s["achieved_buffer_size"] for s in all_quant_stats])),
+                "mean_distance_to_task_A_centroid_mean": float(np.mean([s["mean_distance_to_task_A_centroid"] for s in all_quant_stats])),
+                "mean_distance_to_task_A_centroid_std": float(np.std([s["mean_distance_to_task_A_centroid"] for s in all_quant_stats])),
+                "mean_distance_to_task_B_centroid_mean": float(np.mean([s["mean_distance_to_task_B_centroid"] for s in all_quant_stats])),
+                "mean_distance_to_task_B_centroid_std": float(np.std([s["mean_distance_to_task_B_centroid"] for s in all_quant_stats])),
+                "buffer_diversity_mean": float(np.mean([s["buffer_diversity_mean_pairwise_distance"] for s in all_quant_stats])),
+                "buffer_diversity_std": float(np.std([s["buffer_diversity_mean_pairwise_distance"] for s in all_quant_stats])),
+            }
+            all_classes = sorted({c for s in all_quant_stats for c in s["class_distribution"].keys()})
+            for c in all_classes:
+                pcts = [s["class_distribution"].get(c, {}).get("pct", 0.0) for s in all_quant_stats]
+                agg[f"class_{c}_pct_mean"] = float(np.mean(pcts))
+                agg[f"class_{c}_pct_std"] = float(np.std(pcts))
+
+            agg_path = self.memories_dir / "buffer_quantification_summary.json"
+            with open(agg_path, 'w') as f:
+                json.dump(agg, f, indent=4)
+            print(f"\n[INFO] Aggregated buffer quantification saved to: {agg_path}")
+            print(json.dumps(agg, indent=2))
+
         return final_means['Val_Task_A'], final_means['Val_Task_B'], final_means['Test_Task_A'], final_means['Test_Task_B']
 
 
