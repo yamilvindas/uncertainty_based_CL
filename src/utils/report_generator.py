@@ -518,6 +518,143 @@ def generate_reports(metrics_to_show=['Acc', 'BalAcc', 'MCC'], results_dir="./re
 
     print("\nReport generation completed successfully! All files are in the './report' directory.")
 
+    # Return the aggregated dataframe so a separate ablation step can
+    # reuse the already-parsed main results
+    return df
+
+# =============================================================================
+# Ablation table generation 
+# =============================================================================
+def _build_dataframe_for_dir(results_dir, inference_mode=False):
+    """
+        Mirrors the same file-discovery + parsing loop used inside
+        generate_reports() (glob pattern, extract_metadata, parse_h5_file)
+        for the ablation study, but only returns the DataFrame -- no CSV/LaTeX/plots are written.
+    """
+    if inference_mode:
+        h5_files = glob.glob(os.path.join(results_dir, "*", "infer", "metrics", "predictions*.h5"))
+    else:
+        h5_files = glob.glob(os.path.join(results_dir, "*", "metrics", "predictions*.h5"))
+
+    if not h5_files:
+        print(f"[WARNING] No predictions.h5 files found in {results_dir}")
+        return pd.DataFrame()
+
+    data = []
+    for h5_path in h5_files:
+        if inference_mode:
+            exp_folder = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(h5_path))))
+        else:
+            exp_folder = os.path.basename(os.path.dirname(os.path.dirname(h5_path)))
+        print(f"Processing: {h5_path} (Experiment: {exp_folder})")
+        dataset, approach, group, capacity, is_ewc = extract_metadata(exp_folder)
+
+        metrics = parse_h5_file(h5_path)
+        if metrics is not None:
+            row = {
+                'Experiment': exp_folder,
+                'Dataset': dataset,
+                'Group': group,
+                'Approach': approach,
+                'Capacity': capacity,
+                'Is_EWC': is_ewc,
+                **metrics
+            }
+            data.append(row)
+
+    return pd.DataFrame(data)
+
+
+def build_ablation_table(main_df, ablation_df, dataset_name, capacity_pct, metric, output_dir):
+    """
+        Consolidated 7-row ablation table combining the main results
+        (Proposed / x Class Balancing / x Uncertainty Scoring / x CL Mechanism)
+        with the ablation-run results (x Epistemic / x Entropy / x Aleatoric).
+    """
+    if main_df is None or main_df.empty:
+        print("[WARNING] Main dataframe is empty -- skipping ablation table.")
+        return
+
+    d_main = main_df[main_df["Dataset"] == dataset_name].copy()
+    for c in d_main.columns:
+        if c.endswith("_Mean") or c.endswith("_Std"):
+            d_main[c] = d_main[c] * 100
+    d_main["Capacity_pct"] = (d_main["Capacity"] * 100).round().astype(int)
+
+    d_abl = pd.DataFrame()
+    if not ablation_df.empty:
+        d_abl = ablation_df[ablation_df["Dataset"] == dataset_name].copy()
+        for c in d_abl.columns:
+            if c.endswith("_Mean") or c.endswith("_Std"):
+                d_abl[c] = d_abl[c] * 100
+        d_abl["Capacity_pct"] = (d_abl["Capacity"] * 100).round().astype(int)
+
+    METRIC_TASKB_MEAN = f"Final_{metric}_Task_B_Mean"
+    METRIC_TASKB_STD = f"Final_{metric}_Task_B_Std"
+    METRIC_FORGET_MEAN = f"Forgetting_{metric}_Task_A_Mean"
+    METRIC_FORGET_STD = f"Forgetting_{metric}_Task_A_Std"
+
+    def fmt(mean, std):
+        return f"{mean:.2f} \u00B1 {std:.2f}" if pd.notna(mean) else "N/A (tidak ditemukan)"
+
+    def lookup(df, approach_name, is_ewc, capacity_pct=None):
+        m = df[(df["Approach"] == approach_name) & (df["Is_EWC"] == is_ewc)]
+        if capacity_pct is not None:
+            m = m[m["Capacity_pct"] == capacity_pct]
+        return m.iloc[0] if not m.empty else None
+
+    def lookup_ablation(df, exp_substring, capacity_pct):
+        if df.empty or "Experiment" not in df.columns:
+            return None
+        m = df[df["Experiment"].astype(str).str.contains(exp_substring, na=False) & (df["Capacity_pct"] == capacity_pct)]
+        return m.iloc[0] if not m.empty else None
+
+    ROWS_MAIN = [
+        ("Proposed (Uncertainty Replay + ByClass)", "Uncertainty Replay + ByClass", False, capacity_pct),
+        ("x Class Balancing (-> Uncertainty Replay)", "Uncertainty Replay", False, capacity_pct),
+        ("x Uncertainty Scoring (-> Uniform Replay)", "Uniform Replay", False, capacity_pct),
+        ("x CL Mechanism (-> Baseline, No Memory)", "Baseline (No Memory)", False, None),
+    ]
+    ROWS_ABLATION = [
+        ("x Epistemic (we=0)", "Ablation_xwe"),
+        ("x Entropy (wH=0)", "Ablation_xwH"),
+        ("x Aleatoric (wa=0)", "Ablation_xwa"),
+    ]
+
+    rows_out = []
+    for label, approach_name, is_ewc, cap in ROWS_MAIN:
+        row = lookup(d_main, approach_name, is_ewc, cap)
+        rows_out.append((label, row))
+    for label, exp_substring in ROWS_ABLATION:
+        row = lookup_ablation(d_abl, exp_substring, capacity_pct)
+        rows_out.append((label, row))
+
+    # Reorder to: Proposed, x Class Balancing, x Uncertainty Scoring,
+    # x Epistemic, x Entropy, x Aleatoric, x CL Mechanism
+    order = [0, 1, 2, 4, 5, 6, 3]
+    rows_out = [rows_out[i] for i in order]
+
+    table_rows = []
+    for label, row in rows_out:
+        if row is None:
+            table_rows.append({"Model Variant": label, f"{metric} Task B (%)": "N/A (tidak ditemukan)", "Forgetting (%)": "N/A (tidak ditemukan)"})
+        else:
+            table_rows.append({
+                "Model Variant": label,
+                f"{metric} Task B (%)": fmt(row[METRIC_TASKB_MEAN], row[METRIC_TASKB_STD]),
+                "Forgetting (%)": fmt(row[METRIC_FORGET_MEAN], row[METRIC_FORGET_STD]),
+            })
+
+    ablation_table = pd.DataFrame(table_rows)
+    os.makedirs(output_dir, exist_ok=True)
+    csv_path = os.path.join(output_dir, "ablation_table.csv")
+    ablation_table.to_csv(csv_path, index=False)
+
+    print(f"\nAblation Table -- {dataset_name}, kapasitas {capacity_pct}%")
+    print(ablation_table.to_string(index=False))
+    print(f"\nAblation table CSV generated: {csv_path}")
+
+
 if __name__ == "__main__":
     import argparse
     
@@ -525,6 +662,12 @@ if __name__ == "__main__":
     parser.add_argument('--m_to_show', help='Metrics to include in the LaTeX table', nargs='+', default=['Acc', 'BalAcc', 'MCC'])
     parser.add_argument('--inference_mode', help='Generate reports for inference mode', action='store_true')
     parser.add_argument('--results_dir', help='Directory containing the results files', default='./results')
+    # Ablation-specific arguments (optional; ablation step is skipped
+    # entirely if --ablation_dir has no predictions*.h5 files in it).
+    parser.add_argument('--ablation_dir', help='Directory containing the ablation results (skipped if not found)', default='./results_ablation')
+    parser.add_argument('--ablation_dataset', help='Dataset name for the ablation table', default='HITS')
+    parser.add_argument('--ablation_capacity', help='Memory capacity (%%) used to build the ablation table', type=int, default=10)
+    parser.add_argument('--ablation_metric', help='Metric used to build the ablation table', default='BalAcc')
     args = parser.parse_args()
     
     metrics_to_show = args.m_to_show
@@ -533,4 +676,18 @@ if __name__ == "__main__":
             print(f"[ERROR] Invalid metric '{m}' specified. Valid options are: {list(METRIC_TABLE_NAME.keys())}")
             exit(1)
 
-    generate_reports(metrics_to_show=metrics_to_show, inference_mode=args.inference_mode, results_dir=args.results_dir)
+    main_df = generate_reports(metrics_to_show=metrics_to_show, inference_mode=args.inference_mode, results_dir=args.results_dir)
+
+    # Ablation step -- runs only if the ablation directory actually
+    # contains predictions*.h5 files; otherwise it's silently skipped.
+    ablation_df = _build_dataframe_for_dir(args.ablation_dir, inference_mode=False)
+    if not ablation_df.empty:
+        build_ablation_table(
+            main_df, ablation_df,
+            dataset_name=args.ablation_dataset,
+            capacity_pct=args.ablation_capacity,
+            metric=args.ablation_metric,
+            output_dir='./report',
+        )
+    else:
+        print(f"[INFO] No ablation results found in {args.ablation_dir} -- skipping ablation table.")
